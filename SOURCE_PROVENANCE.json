@@ -62,21 +62,27 @@
     },
     {
       "path": "README.md",
-      "source_kind": "rewritten_portable_staging_document",
+      "source_kind": "maintained_product_documentation",
       "source_project_commit": "39427552c030c631a0ddf10edbc12d705b057e3d",
       "source_path": "README.md",
       "source_git_blob": "fef935681fb2420d0ed8f3738cd93fdc154be060",
       "source_git_blob_sha256": "f446d1a935bfa665fc53dd81f19181ca46b2a2da1e2add0f8c0c36ce87d23a16",
-      "sha256": "7fb85d82fe44b4f48d9f3f7c0fd35a8f39d7ee0526c28f5b717c826663c99019",
-      "review_status": "approved_for_local_staging",
-      "review": "Entire project source/test/tool file reviewed; no real asset payload, model weights, recordings, private absolute build dependency or other external implementation bundled. Compatibility profile identifiers/RVA/opcodes are bounded interface gate facts."
+      "sha256": "435ee3010be26efc74e34e6f0b2f603142c680a96803e649863802a7b4bd9c09",
+      "review_status": "author_reviewed_documentation_maintenance",
+      "review": "Read against current fixed code and existing clone receipts; sources and CLI paths checked. No new independent provenance/game approval is implied.",
+      "prior_staging_sha256": "7fb85d82fe44b4f48d9f3f7c0fd35a8f39d7ee0526c28f5b717c826663c99019",
+      "maintenance_base_commit": "11a771b71ff4d87228a2bf0dc0857db604a616d4",
+      "restoration_source_commit": "39427552c030c631a0ddf10edbc12d705b057e3d",
+      "restoration_source_path": "README.md"
     },
     {
       "path": "SOURCE_REVIEW.md",
-      "source_kind": "staging_authored",
-      "sha256": "5b7e7771602a228678ea93ec23ab1606d05ca7ba854d14cbd0dbd8661859784d",
-      "review_status": "approved_for_local_staging",
-      "review": "New self-contained build/governance/provenance documentation; no runtime code or external asset input."
+      "source_kind": "maintained_product_documentation",
+      "sha256": "1619d5be4b31c52bc8fc62042e33a9e0049a5c72b7fabc2ec72e0638fe01101c",
+      "review_status": "author_reviewed_documentation_maintenance",
+      "review": "Read against current fixed code and existing clone receipts; sources and CLI paths checked. No new independent provenance/game approval is implied.",
+      "prior_staging_sha256": "5b7e7771602a228678ea93ec23ab1606d05ca7ba854d14cbd0dbd8661859784d",
+      "maintenance_base_commit": "11a771b71ff4d87228a2bf0dc0857db604a616d4"
     },
     {
       "path": "THIRD_PARTY_NOTICES.md",
@@ -285,6 +291,30 @@
       "upstream_comparison_record": "deps/minhook/UPSTREAM_COMPARISON.json"
     },
     {
+      "path": "docs/COMPATIBILITY.md",
+      "source_kind": "new_product_documentation",
+      "sha256": "307f96f58d6bb82cb49e1cab9b61ac38e40b357829da252871932c6a4482516a",
+      "maintenance_base_commit": "11a771b71ff4d87228a2bf0dc0857db604a616d4",
+      "review_status": "author_reviewed_documentation_maintenance",
+      "review": "New user/developer navigation derived from current fixed interfaces and portable source394 documentation; local links and documented readonly command flows verified. No independent approval or new game acceptance claimed."
+    },
+    {
+      "path": "docs/DEVELOPMENT.md",
+      "source_kind": "new_product_documentation",
+      "sha256": "a1f936a37a55e31939ca969e3e84b99c382023511948b3ea53e734c8dcb5df51",
+      "maintenance_base_commit": "11a771b71ff4d87228a2bf0dc0857db604a616d4",
+      "review_status": "author_reviewed_documentation_maintenance",
+      "review": "New user/developer navigation derived from current fixed interfaces and portable source394 documentation; local links and documented readonly command flows verified. No independent approval or new game acceptance claimed."
+    },
+    {
+      "path": "docs/INSTALLATION.md",
+      "source_kind": "new_product_documentation",
+      "sha256": "5420931898a31301671ff83e109a462f15746e8b9e17e3cd602a5d26de469f07",
+      "maintenance_base_commit": "11a771b71ff4d87228a2bf0dc0857db604a616d4",
+      "review_status": "author_reviewed_documentation_maintenance",
+      "review": "New user/developer navigation derived from current fixed interfaces and portable source394 documentation; local links and documented readonly command flows verified. No independent approval or new game acceptance claimed."
+    },
+    {
       "path": "docs/INTEGRATION.md",
       "source_kind": "adapted_git_blob",
       "source_project_commit": "39427552c030c631a0ddf10edbc12d705b057e3d",
@@ -297,14 +327,42 @@
     },
     {
       "path": "docs/MAINTENANCE_SOP.md",
-      "source_kind": "rewritten_portable_staging_document",
+      "source_kind": "maintained_product_documentation",
       "source_project_commit": "39427552c030c631a0ddf10edbc12d705b057e3d",
       "source_path": "docs/MAINTENANCE_SOP.md",
       "source_git_blob": "b71b6674b1193f6df3756da0e3d306c242b35591",
       "source_git_blob_sha256": "9f90d971da01749c154a8db03610db88451caa802eab364bba0c8e7f535226cb",
-      "sha256": "1d252775f586e3390b5d56e16915695eef5386deb3f53cc3ad48ce9ab3eae40a",
-      "review_status": "approved_for_local_staging",
-      "review": "Entire project source/test/tool file reviewed; no real asset payload, model weights, recordings, private absolute build dependency or other external implementation bundled. Compatibility profile identifiers/RVA/opcodes are bounded interface gate facts."
+      "sha256": "f88ec54908210307d4d9986c7ee7c95b6a27b451b3da8f3d1714fb8096081f51",
+      "review_status": "author_reviewed_documentation_maintenance",
+      "review": "Read against current fixed code and existing clone receipts; sources and CLI paths checked. No new independent provenance/game approval is implied.",
+      "prior_staging_sha256": "1d252775f586e3390b5d56e16915695eef5386deb3f53cc3ad48ce9ab3eae40a",
+      "maintenance_base_commit": "11a771b71ff4d87228a2bf0dc0857db604a616d4",
+      "restoration_source_commit": "39427552c030c631a0ddf10edbc12d705b057e3d",
+      "restoration_source_path": "docs/MAINTENANCE_SOP.md"
+    },
+    {
+      "path": "docs/README.md",
+      "source_kind": "new_product_documentation",
+      "sha256": "33a90b5c205c9cf0e4d2074623f3e57d8ff13e5abac4686ed1d7b6e6e95b380f",
+      "maintenance_base_commit": "11a771b71ff4d87228a2bf0dc0857db604a616d4",
+      "review_status": "author_reviewed_documentation_maintenance",
+      "review": "New user/developer navigation derived from current fixed interfaces and portable source394 documentation; local links and documented readonly command flows verified. No independent approval or new game acceptance claimed."
+    },
+    {
+      "path": "docs/TROUBLESHOOTING.md",
+      "source_kind": "new_product_documentation",
+      "sha256": "1703d9efb6aa2980be5d73fd5ded3f95dc925be7e8ea6e3aa2ea8ba92e529b93",
+      "maintenance_base_commit": "11a771b71ff4d87228a2bf0dc0857db604a616d4",
+      "review_status": "author_reviewed_documentation_maintenance",
+      "review": "New user/developer navigation derived from current fixed interfaces and portable source394 documentation; local links and documented readonly command flows verified. No independent approval or new game acceptance claimed."
+    },
+    {
+      "path": "docs/VALIDATION.md",
+      "source_kind": "new_product_documentation",
+      "sha256": "f26e606e93fab014be634038628d2938d35b2407d6c05fdb417472178e225408",
+      "maintenance_base_commit": "11a771b71ff4d87228a2bf0dc0857db604a616d4",
+      "review_status": "author_reviewed_documentation_maintenance",
+      "review": "New user/developer navigation derived from current fixed interfaces and portable source394 documentation; local links and documented readonly command flows verified. No independent approval or new game acceptance claimed."
     },
     {
       "path": "include/GakuBurstBridge.h",
@@ -494,5 +552,30 @@
       "review": "Entire project source/test/tool file reviewed; no real asset payload, model weights, recordings, private absolute build dependency or other external implementation bundled. Compatibility profile identifiers/RVA/opcodes are bounded interface gate facts."
     }
   ],
-  "vendor_provenance_limit": "Known declared-base mismatch: observed local MinHook implementation differs in 9/13 complete rendered C-token comparisons against declared8af6b4a. Local bytes frozen; no silent dependency update; complete official license text restored. Exact fork/base and modification provenance unresolved for future public source review."
+  "vendor_provenance_limit": "Known declared-base mismatch: observed local MinHook implementation differs in 9/13 complete rendered C-token comparisons against declared8af6b4a. Local bytes frozen; no silent dependency update; complete official license text restored. Exact fork/base and modification provenance unresolved for future public source review.",
+  "documentation_maintenance": {
+    "base_staging_commit": "11a771b71ff4d87228a2bf0dc0857db604a616d4",
+    "restoration_source_project": "GakuBurstBridge",
+    "restoration_source_commit": "39427552c030c631a0ddf10edbc12d705b057e3d",
+    "restoration_source_paths": [
+      "README.md",
+      "docs/MAINTENANCE_SOP.md"
+    ],
+    "scope": "restore normal product entry and mature portable user/developer/maintenance documentation",
+    "code_inputs_unchanged": true,
+    "compiled_paths_unchanged": [
+      "build.ps1",
+      "src",
+      "include",
+      "tests",
+      "tools",
+      "profiles",
+      "deps"
+    ],
+    "previous_local_clone_results_retained": true,
+    "new_checks": "local documentation links/membership/hash and four readonly CLI flows on synthetic inputs",
+    "new_full_test_run": false,
+    "matching_product_bundle_available": false,
+    "approval_scope": "author-reviewed documentation maintenance only; not new legal/runtime/visual approval"
+  }
 }

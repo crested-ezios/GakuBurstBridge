@@ -1,39 +1,46 @@
 # GakuBurstBridge
 
-GakuMotion 的可选 Windows x64 原生物理伴生库，通过稳定 C ABI v2 在已确认的官方 Burst Swing 入口前交接身体姿态。普通动作播放不需要本库；缺失、门禁拒绝或初始化失败时由 GakuMotion 使用 fallback。
+GakuBurstBridge 是 [GakuMotion](https://github.com/crested-ezios/GakuMotion) 的可选 Windows x64 原生物理伴生库。它把已捕获的身体姿态交给支持的官方 Burst Swing 动画流，让官方头发和服装摆动读取动作输入，并保留原求解器和自然调用顺序。
 
-本目录为独立、本地、无远端的源码 staging 仓。源码、合成测试、只读维护工具以及固定版本 MinHook vendor 均随目录提供，不依赖其他工作区或子模块下载。现有源码目录可直接构建；如需传递源码，可在本仓构建后执行 `git archive --format=zip --output=build/GakuBurstBridge-source.zip HEAD`，接收者解压后从根目录构建。归档仅含已提交源码，不含历史仓 Git 对象、缓存或二进制。
+GakuMotion 默认使用内建弹簧物理。仅使用动作播放时无需 Bridge、Visual Studio 或 Python；选择实验性原生物理时才加载本库，不可用时回退到内建物理。
 
-## 构建与合成测试
+## 安装与使用
 
-需要 Windows x64、Visual Studio 2022 或更新版本的 MSVC C++ x64/x86 工具链及 Windows 10/11 SDK。脚本通过 Visual Studio Installer 的 vswhere 自行定位工具链，不要求 Developer PowerShell。MinHook 已 vendor，无需 git submodule 命令。该 vendor 冻结来源仓实际使用的本地变体，并非声明上游提交的原样副本；具体差异与来源限制见上游记录。Python 3 只用于只读工具与对应测试，不参与 DLL 运行。
+先完成 GakuMotion 及其 [GakuLoader](https://github.com/crested-ezios/GakuLoader) 宿主的安装，再使用该版本配套的 `GakuBurstBridge.dll`，放到游戏目录的：
 
-在源码根目录运行：
+```text
+gakumas-local/GakuMotion/GakuBurstBridge.dll
+```
+
+Bridge 不放在 `plugins/` 根目录，也不替换 Loader 的 `version.dll`。安装或替换前正常退出游戏；重新启动后，在 GakuMotion“设置”页选择实验性原生物理，并查看实际后端状态。`pending` 表示仍在等待支持入口。
+
+**目前本仓还没有可直接下载、已标明与 GakuMotion 匹配版本的二进制产品包。** 本机构建的测试 DLL 没有作为正式发行包发布。用户可以继续使用默认内建物理，开发者可从源码构建。
+
+[安装、升级与卸载](docs/INSTALLATION.md) · [使用排障](docs/TROUBLESHOOTING.md) · [版本与组件关系](docs/COMPATIBILITY.md)
+
+## 从源码构建
+
+需要 Windows x64、Visual Studio 2022 或更新版本的 MSVC C++ x64/x86 工具链及 Windows 10/11 SDK。取得完整源码后，在根目录运行：
 
 ```powershell
 powershell -NoProfile -File build.ps1
 ```
 
-产物为 `build/GakuBurstBridge.dll`，脚本只构建，不部署。建议在本次新建的隔离临时目录运行合成测试：
+输出 `build/GakuBurstBridge.dll`，脚本不会部署到游戏。MinHook 源码已随仓库提供，不需要子模块下载。
 
 ```powershell
-$bridgeTestTemp = Join-Path (Get-Location) ('build/test-temp-' + [guid]::NewGuid().ToString('N'))
-New-Item -ItemType Directory -Path $bridgeTestTemp -Force | Out-Null
-$env:TEMP = $bridgeTestTemp
-$env:TMP = $bridgeTestTemp
 powershell -NoProfile -File build.ps1 -RunTests
-python -m unittest discover -s tools/tests
 ```
 
-C ABI、Core、Quartz、Sleeve 测试使用合成对象、受控 PE 内存和回调，不启动游戏。ABI 测试加载本次构建 DLL，并在上述 TEMP 里创建再删除 `GakuBurstBridge-abi-traces.json`。Python 工具测试只生成合成 PE/JSON。
+此命令同时运行 ABI、Core、Quartz、Sleeve 合成测试。隔离临时目录、可选 Python 测试及构建排障见[开发者指南](docs/DEVELOPMENT.md)。
 
-## 使用与集成
+## 接入与维护
 
-本库不是 GakuLoader 插件。配套发布包中的 DLL 位置是游戏目录下 `gakumas-local/GakuMotion/GakuBurstBridge.dll`；普通用户应使用与 GakuMotion 配套的版本。源码 staging 不包含安装器或部署操作。
+- [文档导航](docs/README.md)：按用户、开发者和维护者组织入口。
+- [C ABI v2](include/GakuBurstBridge.h)和[集成契约](docs/INTEGRATION.md)：线程、所有权、姿态提交及 fallback。
+- [客户端更新维护指南](docs/MAINTENANCE_SOP.md)：PE、元数据、入口定位、回退与性能口径。
+- [构建验证记录](docs/VALIDATION.md)：独立本地 clone 的实测结果及适用范围。
 
-- [C ABI](include/GakuBurstBridge.h) 与[线程、所有权和降级契约](docs/INTEGRATION.md)。
-- [维护入口](docs/MAINTENANCE_SOP.md)；JSON profile 是只读参考，运行时权威是 `src/NativeProfile.hpp`。
-- [来源审阅](SOURCE_REVIEW.md)、[逐文件来源与 SHA256](SOURCE_PROVENANCE.json)、[固定上游版本](deps/minhook/UPSTREAM.md)。
-- [项目 MIT 许可](LICENSE)、[第三方通知](THIRD_PARTY_NOTICES.md)和 [staging NOTICE](NOTICE)。
+BeforeQuartz 和 Sleeve 诊断默认关闭。已安装钩子的 DLL 保留到进程退出，不支持热卸载。
 
-Native 模式必须显式选择，pending 代表尚未发现支持入口，不能表示注入成功。BeforeQuartz 与 Sleeve 诊断默认关闭。已安装钩子的 DLL 固定在进程内直到退出，不支持热卸载。合成测试不证明新的游戏客户端、角色或服装已通过视觉验收。
+项目采用 [MIT 许可](LICENSE)；第三方许可见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。依赖变体与来源资料保留在 [MinHook 上游说明](deps/minhook/UPSTREAM.md)和 [SOURCE_REVIEW.md](SOURCE_REVIEW.md)。

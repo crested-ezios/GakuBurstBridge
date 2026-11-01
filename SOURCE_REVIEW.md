@@ -57,3 +57,27 @@ vendor variant is retained byte-for-byte and the differences are recorded in
 deps/minhook/UPSTREAM_COMPARISON.json. Exact fork/base and modification provenance
 remain unresolved for any future pristine-upstream claim or public source review.
 No dependency code was silently updated as part of staging.
+
+## Product documentation maintenance
+
+The initial source snapshot at 11a771b preserved code but made the README mainly
+about staging/audit and shortened the mature maintainer guide to 26 lines.
+Documentation is now restored for ordinary users and developers. The recovery
+source is GakuBurstBridge 39427552c030c631a0ddf10edbc12d705b057e3d README.md and
+docs/MAINTENANCE_SOP.md, adapted for the independently vendored source layout.
+
+The product README leads with use/install/build. New docs cover installation,
+upgrade/removal, troubleshooting, component compatibility and first development.
+The portable maintainer guide with 18 sections restores the earlier technical workflow,
+input schemas, diagnosis and rollback/performance explanations; it omits machine
+paths, the old live UDP sender and a few captured numerical history paragraphs.
+There is no matching downloadable product bundle yet; local test DLLs are not
+represented as releases. This is a delivery gap, not another source-audit gate.
+
+No compiled input, C ABI, vendor, profile or test implementation changed from 11a771b.
+The independent local-clone build results remain valid for those exact code
+bytes; whole suites were not rerun solely for prose changes. Four readonly CLI
+flows were executed on newly authored synthetic PE/JSON to check the restored
+commands. Current source selection hashes include these document changes.
+Documentation records are marked author-reviewed maintenance, not invented
+independent approval or new game acceptance. The 11a771b commit is retained.
