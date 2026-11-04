@@ -62,18 +62,42 @@
     },
     {
       "path": "README.md",
-      "source_kind": "maintained_product_documentation",
+      "source_kind": "rewritten_portable_staging_document",
       "source_project_commit": "39427552c030c631a0ddf10edbc12d705b057e3d",
       "source_path": "README.md",
       "source_git_blob": "fef935681fb2420d0ed8f3738cd93fdc154be060",
       "source_git_blob_sha256": "f446d1a935bfa665fc53dd81f19181ca46b2a2da1e2add0f8c0c36ce87d23a16",
-      "sha256": "435ee3010be26efc74e34e6f0b2f603142c680a96803e649863802a7b4bd9c09",
+      "sha256": "1c874cbfe555dd373510a33af8c4c997b0759de1495b80e5e9473082e3a76c89",
       "review_status": "author_reviewed_documentation_maintenance",
       "review": "Read against current fixed code and existing clone receipts; sources and CLI paths checked. No new independent provenance/game approval is implied.",
       "prior_staging_sha256": "7fb85d82fe44b4f48d9f3f7c0fd35a8f39d7ee0526c28f5b717c826663c99019",
       "maintenance_base_commit": "11a771b71ff4d87228a2bf0dc0857db604a616d4",
       "restoration_source_commit": "39427552c030c631a0ddf10edbc12d705b057e3d",
-      "restoration_source_path": "README.md"
+      "restoration_source_path": "README.md",
+      "documentation_history": [
+        {
+          "date": "2026-11-04",
+          "previous": {
+            "path": "README.md",
+            "source_kind": "maintained_product_documentation",
+            "source_project_commit": "39427552c030c631a0ddf10edbc12d705b057e3d",
+            "source_path": "README.md",
+            "source_git_blob": "fef935681fb2420d0ed8f3738cd93fdc154be060",
+            "source_git_blob_sha256": "f446d1a935bfa665fc53dd81f19181ca46b2a2da1e2add0f8c0c36ce87d23a16",
+            "sha256": "435ee3010be26efc74e34e6f0b2f603142c680a96803e649863802a7b4bd9c09",
+            "review_status": "author_reviewed_documentation_maintenance",
+            "review": "Read against current fixed code and existing clone receipts; sources and CLI paths checked. No new independent provenance/game approval is implied.",
+            "prior_staging_sha256": "7fb85d82fe44b4f48d9f3f7c0fd35a8f39d7ee0526c28f5b717c826663c99019",
+            "maintenance_base_commit": "11a771b71ff4d87228a2bf0dc0857db604a616d4",
+            "restoration_source_commit": "39427552c030c631a0ddf10edbc12d705b057e3d",
+            "restoration_source_path": "README.md"
+          }
+        }
+      ],
+      "documentation_repair": {
+        "review": "Reviewed technical facts and conditions against current staged code; humanizer-zh expression pass.",
+        "runtime_changed": false
+      }
     },
     {
       "path": "SOURCE_REVIEW.md",
@@ -577,5 +601,17 @@
     "new_full_test_run": false,
     "matching_product_bundle_available": false,
     "approval_scope": "author-reviewed documentation maintenance only; not new legal/runtime/visual approval"
+  },
+  "documentation_repair_20261104": {
+    "date": "2026-11-04",
+    "base_staging_commit": "f9fbefc43d01461da943a47ea1048876a2c79d03",
+    "previous_manifest_sha256": "de9ec0dbc0b91354287a71e61632c80681ef8c241af924b6569937d876da17cd",
+    "scope": "Authorized README/documentation corrections and humanizer-zh review against this staged code; no runtime, test, algorithm, parameter or vendor changes.",
+    "runtime_rebuilt": false,
+    "game_acceptance_added": false,
+    "remote_updated": false,
+    "changed_payload_files": [
+      "README.md"
+    ]
   }
 }
