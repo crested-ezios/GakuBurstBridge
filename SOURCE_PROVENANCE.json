@@ -126,9 +126,10 @@
       "source_path": "build.ps1",
       "source_git_blob": "c96a4a02f287c4db212945aa4287eaaf02b542ca",
       "source_git_blob_sha256": "dd8c8ea13eb9fcd46416f9d925bd01c024c18aba6be4e758a09646a28b2a0bcc",
-      "sha256": "2f8c3603a73b0dad27642b1866a442feccc667b9a00747ba153cf183f2bc387a",
+      "sha256": "fb71b808af1316b8a3eeecdef52128ae37cf4a0fbd578d17d53382edf0dadcfe",
       "review_status": "approved_for_local_staging",
-      "review": "Entire project source/test/tool file reviewed; no real asset payload, model weights, recordings, private absolute build dependency or other external implementation bundled. Compatibility profile identifiers/RVA/opcodes are bounded interface gate facts."
+      "review": "Entire project source/test/tool file reviewed; no real asset payload, model weights, recordings, private absolute build dependency or other external implementation bundled. Compatibility profile identifiers/RVA/opcodes are bounded interface gate facts.",
+      "release_version_refresh_20261106": "Compiles Windows version resource for product identity; C ABI unchanged."
     },
     {
       "path": "deps/minhook/LICENSE.txt",
@@ -574,6 +575,13 @@
       "sha256": "7524fe727d1e21eb6879973126edff19bf17f9f546100cbc0c46b65c71e733a1",
       "review_status": "approved_for_local_staging",
       "review": "Entire project source/test/tool file reviewed; no real asset payload, model weights, recordings, private absolute build dependency or other external implementation bundled. Compatibility profile identifiers/RVA/opcodes are bounded interface gate facts."
+    },
+    {
+      "path": "src/GakuBurstBridge.rc",
+      "source_kind": "staging_authored",
+      "sha256": "76435f5185846154d0cd1fb7e2f01aa30a075ffbbb7a03d46d860fd3f779ed5a",
+      "review_status": "approved_for_local_staging",
+      "review": "Windows product/file version 0.1.0."
     }
   ],
   "vendor_provenance_limit": "Known declared-base mismatch: observed local MinHook implementation differs in 9/13 complete rendered C-token comparisons against declared8af6b4a. Local bytes frozen; no silent dependency update; complete official license text restored. Exact fork/base and modification provenance unresolved for future public source review.",
@@ -613,5 +621,10 @@
     "changed_payload_files": [
       "README.md"
     ]
+  },
+  "release_version_refresh_20261106": {
+    "previous_manifest_sha256": "639f63950cfaeb966da4dd13582295ab8134c177147613e0ae65c5d70d16da92",
+    "version": "0.1.0",
+    "scope": "Windows version resource only; ABI version remains 2."
   }
 }

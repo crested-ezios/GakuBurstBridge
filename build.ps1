@@ -32,8 +32,13 @@ try {
     & cl.exe @gbbCommon /c @gbbMinHookSources "-Fo$gbbObj/"
     if ($LASTEXITCODE -ne 0) { throw 'MinHook compilation failed.' }
     $gbbMinHookObjects = @('hook.obj','buffer.obj','trampoline.obj','hde64.obj') | ForEach-Object { Join-Path $gbbObj $_ }
+    $gbbRc = Join-Path $gbbSdk ('bin\' + $gbbSdkVersion.Name + '\x64\rc.exe')
+    if (-not (Test-Path -LiteralPath $gbbRc)) { throw 'Windows SDK resource compiler missing.' }
+    $gbbRes = Join-Path $gbbObj 'GakuBurstBridge.res'
+    & $gbbRc /nologo /fo $gbbRes (Join-Path $gbbRoot 'src\GakuBurstBridge.rc')
+    if ($LASTEXITCODE -ne 0) { throw 'Version resource compilation failed.' }
     $gbbDll = Join-Path $gbbBuild 'GakuBurstBridge.dll'
-    & cl.exe @gbbCommon /std:c++20 /EHsc /LD /DGBB_BUILD_DLL (Join-Path $gbbRoot 'src\GakuBurstBridge.cpp') @gbbMinHookObjects "-Fo$gbbObj/" "-Fe$gbbDll" /link /INCREMENTAL:NO /DYNAMICBASE /NXCOMPAT
+    & cl.exe @gbbCommon /std:c++20 /EHsc /LD /DGBB_BUILD_DLL (Join-Path $gbbRoot 'src\GakuBurstBridge.cpp') @gbbMinHookObjects $gbbRes "-Fo$gbbObj/" "-Fe$gbbDll" /link /INCREMENTAL:NO /DYNAMICBASE /NXCOMPAT
     if ($LASTEXITCODE -ne 0) { throw 'GakuBurstBridge compilation failed.' }
     if ($RunTests) {
         & cl.exe @gbbCommon /TC /c (Join-Path $gbbRoot 'tests\abi_c.c') "-Fo$gbbObj/abi_c.obj"
