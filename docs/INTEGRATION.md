@@ -1,6 +1,8 @@
 # GakuMotion 与伴生库的集成契约
 
-本文以 `include/GakuBurstBridge.h` 为接口依据。`src/NativeProfile.hpp` 是运行时支持门禁的权威实现；`profiles/supported-build-20261008.json` 是只读工具的参考记录，修改后者不会修改 DLL。
+> 本文档由机器生成，尚未经过开发者完整人工审阅。
+
+本文以 `include/GakuBurstBridge.h` 中的 v2 接口为依据。`src/NativeProfile.hpp` 是运行时支持门禁的权威实现；`profiles/supported-build-20261008.json` 是只读工具的参考记录，修改后者不会修改 DLL。
 
 ## 所有权与线程
 
@@ -15,7 +17,7 @@
 | 轻量通用物理 | 主线程，在 MMD 身体 / 辅助骨写入后运行 | 无 |
 | CPU 统计与故障状态 | 采样汇总到统一诊断 | 固定大小累计计数，无逐帧打印 |
 
-`configure`、`publish`、`clear` 和 `dump_traces` 只能在 Unity 主线程调用。元数据、组件、Transform 的 IL2CPP / Unity 访问不能移入原生工作线程。工作线程只使用真实回调参数、已经绑定的动画句柄和快照副本。不得在持有共享快照 mutex 时访问 Unity，否则可能与等待 job 完成形成互锁。
+`configure`、`publish`、`clear` 和 `dump_traces` 只能在 Unity 主线程调用。元数据、组件、Transform 的 IL2CPP/Unity 访问不能移入原生工作线程。工作线程只使用真实回调参数、已经绑定的动画句柄和快照副本。不得在持有共享快照 mutex 时访问 Unity，否则可能与等待 job 完成形成互锁。
 
 `shutdown` 可在任意线程调用，包括宿主 QuitGuard 工作线程和 DLL detach 路径。它先关闭观察 / 注入，再取消输入 generation、清空快照和日志回调，并将状态置为 shutdown；重复调用成功且不重复递增 generation。此路径不调用 Unity、宿主日志或 MinHook，也不等待原生 job。已安装的 detour 保留为直接调用原函数的惰性转发层，DLL 和 trampoline 留到进程退出。因此不会因卸载线程并非 Unity 主线程而返回 `GBB_E_THREAD` 并留下有效注入。
 
@@ -23,7 +25,7 @@ shutdown 是终止会话，不能在同一进程重新 configure / publish / cle
 
 ## 加载协议
 
-GakuMotion 默认使用 fallback，不探测或加载 DLL。显式选择 native 时，客户端从 `host.localRoot/GakuMotion/GakuBurstBridge.dll` 固定绝对路径加载，使用受控 DLL 搜索标志；不从当前工作目录、环境 PATH 或未知插件目录加载同名库。
+GakuMotion 在需要原生物理时，从宿主提供的 `pluginsRoot/GakuBurstBridge.dll` 加载配套伴生库；标准安装路径为游戏目录下的 `GakuLoader/plugins/GakuBurstBridge.dll`。GakuLoader 扫描插件时跳过这个辅助 DLL，由 GakuMotion 按需调用；它不是独立的 Loader 插件。加载使用受控 DLL 搜索标志，不搜索当前工作目录或环境 PATH。历史版本曾使用 `gakumas-local/GakuMotion/GakuBurstBridge.dll`，新包不使用该路径。
 
 先解析唯一导出 `GakuBurstBridge_GetApi`，再请求 `GBB_API_VERSION=2`。每个调用方拥有的结构体设置 `size=sizeof(结构体)`、`version=GBB_API_VERSION`，reserved 字段清零。函数表版本、结构大小和所有必需函数指针校验通过后，才能调用。加载失败、导出缺失、版本拒绝、configure 失败都返回 fallback；不得继续调用空指针或不兼容函数表。
 
@@ -47,12 +49,12 @@ ABI v2 结构大小不变；`GbbFrame.flags` 新增显式 `GBB_FRAME_BEFORE_QUAR
 
 运行中卡顿导致的过期包、缺失配对和旧 generation 只跳过当次注入，下一次完整有效配对可自然恢复，不解除已有真实故障。过期的残留 Quartz 配对在下一次有效 Quartz 前丢弃；未过期的重复、阶段/身份/调用入口异常和原生读写失败仍保持熔断。缺失配对不借用其它线程的输入，不重复消费；初次启用 2 秒无法配对的门禁保留。`before_quartz_experiment.rejected` 保留各类拒绝计数，过期跳过同时进入 `GbbPerf.expired_skips`。
 
-清除 flag 4 恢复原 Swing-only 路径；宿主切换时应 `clear`，若已熔断，在明确边界用 `GBB_CLEAR_RESET_FAULT` 恢复。Quartz 可选入口验证失败不会把原 OFF 路径永久标为不支持。flag 8 只保存自然 HumanoidSleeve `InternalGetMuscle_Injected` 的实际返回值，最多 8192 条；不写 muscle，不额外调用 reader 或动画求值。`dump_traces` 增加 `before_quartz_experiment` 配对计数及 `sleeve_muscle_probe` 样本，跨 `clear` 保留已捕获证据。首次启用后钩子仍留到进程退出；关闭实验、停止诊断不等于卸载 DLL。
+清除 flag 4 恢复原 Swing-only 路径；宿主切换时应 `clear`，若已熔断，在明确边界用 `GBB_CLEAR_RESET_FAULT` 恢复。Quartz 可选入口验证失败不会把原 OFF 路径永久标为不支持。flag 8 只保存自然 HumanoidSleeve `InternalGetMuscle_Injected` 的实际返回值，最多 8192 条；不写 muscle，不额外调用 reader 或动画求值。`dump_traces` 增加 `before_quartz_experiment` 配对计数及 `sleeve_muscle_probe` 样本，跨 `clear` 保留已捕获证据。首次启用后，钩子仍留到进程退出。
 
 
 ## 两种求解器只能有一个写入者
 
-Native 成功时，fallback 不写同一批头发 / 裙骨。Native 未就绪或故障时先清空 stream 输入，再让 fallback 接管。切换轨道、Stop、Actor 丢失、服装重绑、场景变化或 seek 时，重置对应状态，避免把旧角色 / 旧时间的惯性带进新姿态。
+Native 成功时，fallback 不写同一批头发 / 裙骨。Native 未就绪或故障时，先清空 stream 输入，再让 fallback 接管。切换轨道、Stop、Actor 丢失、服装重绑、场景变化或 seek 时，重置对应状态，避免把旧角色 / 旧时间的惯性带进新姿态。
 
 `clear(GBB_CLEAR_RESET_FAULT)` 可以在主线程的明确生命周期边界解除熔断；不要每帧自动解除同一错误。generation 能阻止旧结果重新发布，但不构成“已在执行的写入全部原子取消”的屏障，不应在此协议上承诺热卸载。
 
@@ -60,11 +62,11 @@ Native 成功时，fallback 不写同一批头发 / 裙骨。Native 未就绪或
 
 库只在初始化或状态变化时通过 main-thread `GbbLogFn` 回调记录有限日志；不在 worker 每次回调打印。`get_status` / `get_perf` 为读接口。`GBB_FRAME_WORLD_DIAGNOSTICS` 默认关闭，维护时按短窗口启用。
 
-成功发现并安装支持的 Swing 入口后，库停用全局 GetDeltaTime 发现 hook，保留其 trampoline 到进程结束，避免常规播放继续承担全局 trace / 锁开销。发现期当前有 10 秒超时；不支持的入口保持 unavailable，初始化门禁失败本进程不自动重试。
+成功发现并安装支持的 Swing 入口后，库停用全局 GetDeltaTime 发现 hook，保留其 trampoline 到进程结束，避免常规播放继续承担全局 trace / 锁开销。发现期当前有 10 秒超时；不支持的入口保持 unavailable，初始化门禁失败，本进程不自动重试。
 
 API v2 增加 `dump_traces(const wchar_t* absolute_file)`，只在主线程把已捕获的固定 32 槽 Burst caller / unwind / dt 计数写成 JSON；不在 worker 打印、不主动执行 job。GakuRecorder 的 PROBE 可选调用该接口，输出 `<localRoot>/GakuMotion/burst_trace.json`。已知入口安装或 10 秒未知入口超时后停止采集，保留数据供维护者读取。未知 ABI 被初始化门禁拒绝时不会开始采集；先修复经过验证的 ABI gate，再收集真实 callback。
 
-同一显式导出还在主线程读取 Stream、Handle、CampusJob、Swing 的 `value_size` / `alignment` 和每类最多 64 项字段元数据，输出 `abi_classes` 与检查工具可读的 `observed`。布局拒绝不会阻止此只读报告；缺少可选枚举导出时标记 unavailable。字段保留原始 boxed offset、type name / type code、static flags，unboxed 对照值明确依赖 profile 的 boxed-header 假设。报告不把假设头大小当成独立实测，也不放宽运行时字段 gate。
+同一显式导出还在主线程读取 Stream、Handle、CampusJob、Swing 的 `value_size` / `alignment` 和每类最多 64 项字段元数据，输出 `abi_classes` 与检查工具可读的 `observed`。布局拒绝不会阻止此只读报告；缺少可选枚举导出时标记为 unavailable。字段保留原始 boxed offset、type name / type code、static flags，unboxed 对照值明确依赖 profile 的 boxed-header 假设。报告不把假设头大小当成独立实测，也不放宽运行时字段 gate。
 
 `GbbPerf` 的计数为累计纳秒。比较时间窗使用两次快照之差，再除以调用数：
 
@@ -78,4 +80,4 @@ API v2 增加 `dump_traces(const wchar_t* absolute_file)`，只在主线程把�
 
 QueryPerformanceCounter 的区间是执行经过时间，不是操作系统线程 CPU time；被抢占、锁等待或抢占后的恢复会进入记录值。报告要写“区间耗时”，不要将它等同于整机 CPU 百分比。录制 rig / 控制台打印也可能改变帧节奏，性能对照必须同样开关 Recorder 和诊断，不把相关性写成已证明的唯一因果。
 
-worker 统计只累计双指纹命中的目标 Actor；其它角色、空 snapshot 的微小 detour 检查成本不在 `native_*` 内。比较默认 fallback 与 native 的完整开销应各用新进程：fallback 进程从未加载伴生库；native 之后 `clear` 虽然不再写入，已安装 detour 仍存在。`shutdown` 结束当前进程内库会话，保留仅调用原函数的 detour；不要以“先 native 再 clear / shutdown”的同一进程作为零原生开销 baseline。
+worker 统计只累计双指纹命中的目标 Actor；其它角色、空 snapshot 的微小 detour 检查成本不在 `native_*` 内。比较显式选择的 fallback 与 native 的完整开销应各用新进程：fallback 进程从未加载伴生库；native 之后 `clear` 虽然不再写入，已安装 detour 仍存在。`shutdown` 结束当前进程内库会话，保留仅调用原函数的 detour；不要以“先 native 再 clear / shutdown”的同一进程作为零原生开销 baseline。

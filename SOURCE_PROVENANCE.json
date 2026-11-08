@@ -62,14 +62,14 @@
     },
     {
       "path": "README.md",
-      "source_kind": "rewritten_portable_staging_document",
+      "source_kind": "cloud_documentation_only",
       "source_project_commit": "39427552c030c631a0ddf10edbc12d705b057e3d",
       "source_path": "README.md",
       "source_git_blob": "fef935681fb2420d0ed8f3738cd93fdc154be060",
       "source_git_blob_sha256": "f446d1a935bfa665fc53dd81f19181ca46b2a2da1e2add0f8c0c36ce87d23a16",
-      "sha256": "1c874cbfe555dd373510a33af8c4c997b0759de1495b80e5e9473082e3a76c89",
-      "review_status": "author_reviewed_documentation_maintenance",
-      "review": "Read against current fixed code and existing clone receipts; sources and CLI paths checked. No new independent provenance/game approval is implied.",
+      "sha256": "d8212716f209a240ef4351ea081995be18d5e14c399471bf54956d75b429aef8",
+      "review_status": "cloud-polish-imported",
+      "review": "Imported from user-reviewed cloud documentation commit a6bca793bc3bcbb04a68c97e8142c2c3a9ab4153; runtime source unchanged.",
       "prior_staging_sha256": "7fb85d82fe44b4f48d9f3f7c0fd35a8f39d7ee0526c28f5b717c826663c99019",
       "maintenance_base_commit": "11a771b71ff4d87228a2bf0dc0857db604a616d4",
       "restoration_source_commit": "39427552c030c631a0ddf10edbc12d705b057e3d",
@@ -92,12 +92,21 @@
             "restoration_source_commit": "39427552c030c631a0ddf10edbc12d705b057e3d",
             "restoration_source_path": "README.md"
           }
+        },
+        {
+          "date": "2026-11-07",
+          "previous_sha256": "782cd54180891721939ceac5dfe6885c57bfa90b2fb97de5c892e966046d0bba"
         }
       ],
       "documentation_repair": {
         "review": "Reviewed technical facts and conditions against current staged code; humanizer-zh expression pass.",
         "runtime_changed": false
-      }
+      },
+      "path_layout_refresh_20261106": {
+        "previous_sha256": "1c874cbfe555dd373510a33af8c4c997b0759de1495b80e5e9473082e3a76c89",
+        "scope": "Documentation now describes GakuLoader/plugins companion layout; no bridge runtime change."
+      },
+      "staging_adapted": true
     },
     {
       "path": "SOURCE_REVIEW.md",
@@ -317,77 +326,127 @@
     },
     {
       "path": "docs/COMPATIBILITY.md",
-      "source_kind": "new_product_documentation",
-      "sha256": "307f96f58d6bb82cb49e1cab9b61ac38e40b357829da252871932c6a4482516a",
+      "source_kind": "cloud_documentation_only",
+      "sha256": "ae504c2502c146eb42052304abb396fdf9e2c7448f19a9dd824a820e5c0b7296",
       "maintenance_base_commit": "11a771b71ff4d87228a2bf0dc0857db604a616d4",
-      "review_status": "author_reviewed_documentation_maintenance",
-      "review": "New user/developer navigation derived from current fixed interfaces and portable source394 documentation; local links and documented readonly command flows verified. No independent approval or new game acceptance claimed."
+      "review_status": "cloud-polish-imported",
+      "review": "Imported from user-reviewed cloud documentation commit a6bca793bc3bcbb04a68c97e8142c2c3a9ab4153; runtime source unchanged.",
+      "documentation_history": [
+        {
+          "date": "2026-11-07",
+          "previous_sha256": "307f96f58d6bb82cb49e1cab9b61ac38e40b357829da252871932c6a4482516a"
+        }
+      ],
+      "staging_adapted": true
     },
     {
       "path": "docs/DEVELOPMENT.md",
       "source_kind": "new_product_documentation",
-      "sha256": "a1f936a37a55e31939ca969e3e84b99c382023511948b3ea53e734c8dcb5df51",
+      "sha256": "ef52f6848747a0030afede1fe4fc4eec040648f3d5a3d33aad23fb28e0f38c41",
       "maintenance_base_commit": "11a771b71ff4d87228a2bf0dc0857db604a616d4",
       "review_status": "author_reviewed_documentation_maintenance",
-      "review": "New user/developer navigation derived from current fixed interfaces and portable source394 documentation; local links and documented readonly command flows verified. No independent approval or new game acceptance claimed."
+      "review": "New user/developer navigation derived from current fixed interfaces and portable source394 documentation; local links and documented readonly command flows verified. No independent approval or new game acceptance claimed.",
+      "documentation_history": [
+        {
+          "date": "2026-11-07",
+          "previous_sha256": "a1f936a37a55e31939ca969e3e84b99c382023511948b3ea53e734c8dcb5df51"
+        }
+      ],
+      "staging_adapted": true
     },
     {
       "path": "docs/INSTALLATION.md",
-      "source_kind": "new_product_documentation",
-      "sha256": "5420931898a31301671ff83e109a462f15746e8b9e17e3cd602a5d26de469f07",
+      "source_kind": "cloud_documentation_only",
+      "sha256": "60d78e8f018ad7d03ae1810408b82290164b4db6fbc7f41666d13c6f75c24f3f",
       "maintenance_base_commit": "11a771b71ff4d87228a2bf0dc0857db604a616d4",
-      "review_status": "author_reviewed_documentation_maintenance",
-      "review": "New user/developer navigation derived from current fixed interfaces and portable source394 documentation; local links and documented readonly command flows verified. No independent approval or new game acceptance claimed."
+      "review_status": "cloud-polish-imported",
+      "review": "Imported from user-reviewed cloud documentation commit a6bca793bc3bcbb04a68c97e8142c2c3a9ab4153; runtime source unchanged.",
+      "path_layout_refresh_20261106": {
+        "previous_sha256": "5420931898a31301671ff83e109a462f15746e8b9e17e3cd602a5d26de469f07",
+        "scope": "Documentation now describes GakuLoader/plugins companion layout; no bridge runtime change."
+      },
+      "documentation_history": [
+        {
+          "date": "2026-11-07",
+          "previous_sha256": "96c42980a4b1f71980daf971120ed628b0fec2bc19eab47a44681010be7b858a"
+        }
+      ],
+      "staging_adapted": true
     },
     {
       "path": "docs/INTEGRATION.md",
-      "source_kind": "adapted_git_blob",
+      "source_kind": "cloud_documentation_only",
       "source_project_commit": "39427552c030c631a0ddf10edbc12d705b057e3d",
       "source_path": "docs/INTEGRATION.md",
       "source_git_blob": "d3f025eec30c130aaeec7adbbf5fe16837c5e83b",
       "source_git_blob_sha256": "fe5cf935000b1b2545f50ea84e5c9d310643453ae3fdfba8120f5616665a1e1c",
-      "sha256": "aa0bcf4aff1ca2a75911586c2e6d97f7f790177b42f660b1215321bc8adf671f",
-      "review_status": "approved_for_local_staging",
-      "review": "Entire project source/test/tool file reviewed; no real asset payload, model weights, recordings, private absolute build dependency or other external implementation bundled. Compatibility profile identifiers/RVA/opcodes are bounded interface gate facts."
+      "sha256": "bbb76d377d572dd584b56e3dd6c17831c2fcd08c49823d1d11d46648df370563",
+      "review_status": "cloud-polish-imported",
+      "review": "Imported from user-reviewed cloud documentation commit a6bca793bc3bcbb04a68c97e8142c2c3a9ab4153; runtime source unchanged.",
+      "path_layout_refresh_20261106": {
+        "previous_sha256": "aa0bcf4aff1ca2a75911586c2e6d97f7f790177b42f660b1215321bc8adf671f",
+        "scope": "Documentation now describes GakuLoader/plugins companion layout; no bridge runtime change."
+      },
+      "documentation_history": [
+        {
+          "date": "2026-11-07",
+          "previous_sha256": "c089a32e9e7570b0f0c29c33eabd3334af3372631a9b14d06f53b625d9da4369"
+        }
+      ],
+      "staging_adapted": true
     },
     {
       "path": "docs/MAINTENANCE_SOP.md",
-      "source_kind": "maintained_product_documentation",
+      "source_kind": "cloud_documentation_only",
       "source_project_commit": "39427552c030c631a0ddf10edbc12d705b057e3d",
       "source_path": "docs/MAINTENANCE_SOP.md",
       "source_git_blob": "b71b6674b1193f6df3756da0e3d306c242b35591",
       "source_git_blob_sha256": "9f90d971da01749c154a8db03610db88451caa802eab364bba0c8e7f535226cb",
-      "sha256": "f88ec54908210307d4d9986c7ee7c95b6a27b451b3da8f3d1714fb8096081f51",
-      "review_status": "author_reviewed_documentation_maintenance",
-      "review": "Read against current fixed code and existing clone receipts; sources and CLI paths checked. No new independent provenance/game approval is implied.",
+      "sha256": "a602cf42c1a459cff319fb54b923f8b317aa47752cd4a9f49315ae27ab219135",
+      "review_status": "cloud-polish-imported",
+      "review": "Imported from user-reviewed cloud documentation commit a6bca793bc3bcbb04a68c97e8142c2c3a9ab4153; runtime source unchanged.",
       "prior_staging_sha256": "1d252775f586e3390b5d56e16915695eef5386deb3f53cc3ad48ce9ab3eae40a",
       "maintenance_base_commit": "11a771b71ff4d87228a2bf0dc0857db604a616d4",
       "restoration_source_commit": "39427552c030c631a0ddf10edbc12d705b057e3d",
-      "restoration_source_path": "docs/MAINTENANCE_SOP.md"
+      "restoration_source_path": "docs/MAINTENANCE_SOP.md",
+      "path_layout_refresh_20261106": {
+        "previous_sha256": "f88ec54908210307d4d9986c7ee7c95b6a27b451b3da8f3d1714fb8096081f51",
+        "scope": "Documentation now describes GakuLoader/plugins companion layout; no bridge runtime change."
+      },
+      "documentation_history": [
+        {
+          "date": "2026-11-07",
+          "previous_sha256": "4ea4dfa6bcd43b24c01d8bcb0cb0748ef44baf67f44860ae3ac56780ff5df686"
+        }
+      ],
+      "staging_adapted": true
     },
     {
       "path": "docs/README.md",
-      "source_kind": "new_product_documentation",
-      "sha256": "33a90b5c205c9cf0e4d2074623f3e57d8ff13e5abac4686ed1d7b6e6e95b380f",
+      "source_kind": "cloud_documentation_only",
+      "sha256": "5d310efa5aec747eec4680fdf51139372be5678e29dd6447e593bf5b2f2aad91",
       "maintenance_base_commit": "11a771b71ff4d87228a2bf0dc0857db604a616d4",
-      "review_status": "author_reviewed_documentation_maintenance",
-      "review": "New user/developer navigation derived from current fixed interfaces and portable source394 documentation; local links and documented readonly command flows verified. No independent approval or new game acceptance claimed."
+      "review_status": "cloud-polish-imported",
+      "review": "Imported from user-reviewed cloud documentation commit a6bca793bc3bcbb04a68c97e8142c2c3a9ab4153; runtime source unchanged.",
+      "documentation_history": [
+        {
+          "date": "2026-11-07",
+          "previous_sha256": "33a90b5c205c9cf0e4d2074623f3e57d8ff13e5abac4686ed1d7b6e6e95b380f"
+        }
+      ],
+      "staging_adapted": true
     },
     {
       "path": "docs/TROUBLESHOOTING.md",
-      "source_kind": "new_product_documentation",
-      "sha256": "1703d9efb6aa2980be5d73fd5ded3f95dc925be7e8ea6e3aa2ea8ba92e529b93",
+      "source_kind": "cloud_documentation_only",
+      "sha256": "4a8a1e6df6b00ec7569f229d1bd31952ee7d22263e6c9a4f217443af3c23a441",
       "maintenance_base_commit": "11a771b71ff4d87228a2bf0dc0857db604a616d4",
-      "review_status": "author_reviewed_documentation_maintenance",
-      "review": "New user/developer navigation derived from current fixed interfaces and portable source394 documentation; local links and documented readonly command flows verified. No independent approval or new game acceptance claimed."
-    },
-    {
-      "path": "docs/VALIDATION.md",
-      "source_kind": "new_product_documentation",
-      "sha256": "f26e606e93fab014be634038628d2938d35b2407d6c05fdb417472178e225408",
-      "maintenance_base_commit": "11a771b71ff4d87228a2bf0dc0857db604a616d4",
-      "review_status": "author_reviewed_documentation_maintenance",
-      "review": "New user/developer navigation derived from current fixed interfaces and portable source394 documentation; local links and documented readonly command flows verified. No independent approval or new game acceptance claimed."
+      "review_status": "cloud-polish-imported",
+      "review": "Imported from user-reviewed cloud documentation commit a6bca793bc3bcbb04a68c97e8142c2c3a9ab4153; runtime source unchanged.",
+      "path_layout_refresh_20261106": {
+        "previous_sha256": "1703d9efb6aa2980be5d73fd5ded3f95dc925be7e8ea6e3aa2ea8ba92e529b93",
+        "scope": "Documentation now describes GakuLoader/plugins companion layout; no bridge runtime change."
+      }
     },
     {
       "path": "include/GakuBurstBridge.h",
@@ -421,6 +480,13 @@
       "sha256": "b58f7037972a8220c1015fc87955eec8e242e34280e27cd749666d3a0d384f20",
       "review_status": "approved_for_local_staging",
       "review": "Entire project source/test/tool file reviewed; no real asset payload, model weights, recordings, private absolute build dependency or other external implementation bundled. Compatibility profile identifiers/RVA/opcodes are bounded interface gate facts."
+    },
+    {
+      "path": "src/GakuBurstBridge.rc",
+      "source_kind": "staging_authored",
+      "sha256": "76435f5185846154d0cd1fb7e2f01aa30a075ffbbb7a03d46d860fd3f779ed5a",
+      "review_status": "approved_for_local_staging",
+      "review": "Windows product/file version 0.1.0."
     },
     {
       "path": "src/Il2CppAccess.hpp",
@@ -575,13 +641,6 @@
       "sha256": "7524fe727d1e21eb6879973126edff19bf17f9f546100cbc0c46b65c71e733a1",
       "review_status": "approved_for_local_staging",
       "review": "Entire project source/test/tool file reviewed; no real asset payload, model weights, recordings, private absolute build dependency or other external implementation bundled. Compatibility profile identifiers/RVA/opcodes are bounded interface gate facts."
-    },
-    {
-      "path": "src/GakuBurstBridge.rc",
-      "source_kind": "staging_authored",
-      "sha256": "76435f5185846154d0cd1fb7e2f01aa30a075ffbbb7a03d46d860fd3f779ed5a",
-      "review_status": "approved_for_local_staging",
-      "review": "Windows product/file version 0.1.0."
     }
   ],
   "vendor_provenance_limit": "Known declared-base mismatch: observed local MinHook implementation differs in 9/13 complete rendered C-token comparisons against declared8af6b4a. Local bytes frozen; no silent dependency update; complete official license text restored. Exact fork/base and modification provenance unresolved for future public source review.",
@@ -626,5 +685,49 @@
     "previous_manifest_sha256": "639f63950cfaeb966da4dd13582295ab8134c177147613e0ae65c5d70d16da92",
     "version": "0.1.0",
     "scope": "Windows version resource only; ABI version remains 2."
+  },
+  "path_layout_refresh_20261106": {
+    "previous_manifest_sha256": "d79f44917860be9e4680dfbef069773bd1dfc94d119ba7cf249b92f08dbee1d3",
+    "changed_files": [
+      "README.md",
+      "docs/INSTALLATION.md",
+      "docs/INTEGRATION.md",
+      "docs/MAINTENANCE_SOP.md",
+      "docs/TROUBLESHOOTING.md"
+    ],
+    "scope": "Documentation only; path ownership verified against paired Motion and Loader source."
+  },
+  "public_doc_alignment_20261107": {
+    "previous_manifest_sha256": "534e7697023818f237974490c7792c9475113dd69829c3884973ced1f63e44ba",
+    "scope": "Public documentation only; no build, runtime, ABI, dependency or license changes.",
+    "changed_payload_files": [
+      "README.md",
+      "docs/COMPATIBILITY.md",
+      "docs/DEVELOPMENT.md",
+      "docs/INSTALLATION.md",
+      "docs/INTEGRATION.md",
+      "docs/MAINTENANCE_SOP.md",
+      "docs/README.md"
+    ],
+    "game_acceptance": "existing user-reported results unchanged",
+    "remote_updated": false
+  },
+  "cloud_document_polish_20261108": {
+    "date": "2026-11-08",
+    "remote_commit": "a6bca793bc3bcbb04a68c97e8142c2c3a9ab4153",
+    "changed": [
+      "README.md",
+      "docs/COMPATIBILITY.md",
+      "docs/INSTALLATION.md",
+      "docs/INTEGRATION.md",
+      "docs/MAINTENANCE_SOP.md",
+      "docs/README.md",
+      "docs/TROUBLESHOOTING.md"
+    ],
+    "deleted": [
+      "docs/VALIDATION.md"
+    ],
+    "runtime_changed": false,
+    "note": "User-reviewed cloud documentation imported identically into the staging tree."
   }
 }

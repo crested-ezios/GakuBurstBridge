@@ -2,7 +2,7 @@
 
 ## 获取和构建
 
-使用本仓的 Code 下载入口或正常 Git clone 取得完整源码。MinHook 已随源码提供，无需 `--recurse-submodules`；只复制 `src/` 会遗漏公开头文件和 vendor。
+取得完整源码和依赖后再构建。发布源码快照已包含 MinHook；开发检出若使用 Git 子模块，需按其 `.gitmodules` 初始化。只复制 `src/` 会遗漏公开头文件和依赖。
 
 需要 Windows x64、Visual Studio 2022 或更新版本的 MSVC C++ x64/x86 工具链和 Windows 10/11 SDK。脚本用 Visual Studio Installer 的 `vswhere` 自动设置环境，不要求 Developer PowerShell。
 
@@ -52,7 +52,7 @@ python tools/inspect_metadata.py --help
 | `Visual Studio C++ Build Tools and Windows SDK are required` | 安装 VS C++ x64/x86 工作负载、Windows SDK 与 Visual Studio Installer。 |
 | `No MSVC x64 installation found` | 确认安装了能被 vswhere 发现的 C++ 工具。 |
 | `MSVC or Windows SDK headers are missing` | 补齐 SDK 头文件和 x64 库。 |
-| `Vendored MinHook sources are missing` | 重新取得完整源码；本仓不通过初始化空子模块补齐 vendor。 |
+| `Vendored MinHook sources are missing` | 重新取得完整源码；开发检出若使用子模块，按仓库配置初始化后重试。 |
 | 构建成功但游戏未变化 | 构建不负责安装，新 DLL 也不会在现有进程生效；见[安装指南](INSTALLATION.md)。 |
 
-MinHook 固定本地变体及已知来源差异见 [UPSTREAM.md](../deps/minhook/UPSTREAM.md)，文档维护不改变该依赖。
+MinHook 的许可见 `deps/minhook/LICENSE.txt` 和[第三方通知](../THIRD_PARTY_NOTICES.md)。文档维护不改变该依赖。

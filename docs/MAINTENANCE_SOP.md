@@ -1,8 +1,18 @@
 # 版本更新维护 SOP：从客户端更新到可审查候选
 
-适用：Windows x64 的 GakuBurstBridge 维护者。参考 profile 为 `gakumas-burst-20261008-windows-x64`；其中日期是参考标识，不是当前游戏版本号。读者应能编译 C++ DLL、看懂指针和结构体、使用 Git；定位改变的入口还需要辨认基本 x64 指令。不了解某条指令时，先保持 fallback，再查证，不以“地址好像接近”代替确认。
+> **关于本文档与维护方式**
+> 
+> 本文档由 AI Coding Agent 生成，尚未经开发者逐项人工审校。
+>
+> GakuBurstBridge 涉及游戏原生代码、Burst 内部结构及版本相关的二进制适配。当前开发者无法在不借助 AI Coding Agent 的情况下独立完成全部维护工作。
+> 
+> 建议后续维护者将本文档、当前源码及相关测试记录一并提供给具备代码检索、编译和调试能力的 AI Coding Agent，辅助分析游戏更新后的兼容性变化。
+> 
+> 本仓库主要使用 **Codex + ChatGPT 6.1 Sol** 辅助开发。AI 生成的适配结果仍须经过实际编译、运行和必要的人工验收。
 
-这份 SOP 的产物是一份能审查的适配证据和候选 DLL。流程不会自动修复未来的 Unity ABI。常规 GakuMotion 播放和默认弹簧物理不需要维护者处理 Burst；只有选用官方原生物理时才需要本仓库。
+适用：Windows x64 的 GakuBurstBridge 维护者。参考 profile 为 `gakumas-burst-20261008-windows-x64`；其中日期是参考标识，不是当前游戏版本号。读者应能编译 C++ DLL、看懂指针和结构体、使>用 Git；定位改变的入口还需要辨认基本 x64 指令。不了解某条指令时，先保持 fallback，再查证，不以“地址好像接近”代替确认。
+
+这份 SOP 的产物是一份能审查的适配证据和候选 DLL。流程不会自动修复未来的 Unity ABI。常规 GakuMotion 播放与内建弹簧物理不需要维护者处理 Burst；当前默认优先尝试原生后端，缺少或不能使用 Bridge 时会回退。
 
 ## 1. 更新后先做什么
 
@@ -197,7 +207,7 @@ python tools/inspect_metadata.py --abi-json $traceJson --output build/new-client
 
 普通维护者不需要修改 C++ 来获取未知版本 caller：
 
-1. 在角色和服装已加载的场景显式选择 native 一次。默认 fallback 不会加载 DLL，无法产生原生 trace。
+1. 在角色和服装已加载的场景确认已选择 native。显式使用 fallback 不会加载 DLL，无法产生原生 trace。
 2. 如果元数据门禁仍通过，等待最多 10 秒发现窗口。新入口未知会拒绝安装、自动降 fallback，但短窗口真实 Burst trace 保留在库内。
 3. 向 Recorder 发送上节相同 `PROBE` 命令。Recorder 通过可选 API v2 `dump_traces` 在主线程输出 `<localRoot>/GakuMotion/burst_trace.json`。
 4. 检查文件生成时间、`api_version=2`、`schema_version=1`、trace 数量和 `dropped_traces`。空数组不代表“没有物理”：可能初始化 gate 已拒绝、场景无活跃 job、调用入口变化或 probe 未发生。看 `state`、`last_result` 与 Motion 状态说明。
@@ -281,7 +291,7 @@ icall / bind 接口同样核对：
 
 ## 12. 构建、只读试运行、有限注入
 
-在独立仓库根目录构建 `build/GakuBurstBridge.dll`，检查导出 `GakuBurstBridge_GetApi` 和函数表 version。部署到 `<localRoot>/GakuMotion/GakuBurstBridge.dll`；Motion 的 DLL 与伴生 DLL 分别保留已知可回退版本。
+在独立仓库根目录构建 `build/GakuBurstBridge.dll`，检查导出 `GakuBurstBridge_GetApi` 和函数表 version。部署到宿主插件目录 `GakuLoader/plugins/GakuBurstBridge.dll`；Motion 的 DLL 与伴生 DLL 分别保留已知可回退版本。
 
 按三个阶段测试，不同时改变 retarget 公式和原生 ABI：
 
