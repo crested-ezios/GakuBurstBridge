@@ -2,7 +2,19 @@
 
 > 本文档由机器生成，尚未经过开发者完整人工审阅。
 
-本文以 `include/GakuBurstBridge.h` 中的 v2 接口为依据。`src/NativeProfile.hpp` 是运行时支持门禁的权威实现；`profiles/supported-build-20261008.json` 是只读工具的参考记录，修改后者不会修改 DLL。
+## 三演员上下文（ABI v3）
+
+`GakuBurstBridge_GetApi(3, GbbApiV3*)` 返回新的上下文函数表。原 ABI v2 的表大小、结构与全局单演员语义保留；v3 的 Config、Frame、Status、Perf 载荷仍使用版本 2。宿主必须同时校验表的 size/version 和所有函数指针。
+
+v3 最多创建三个非零 `GbbContext`。token 只表示本进程中的一次演员生命周期；销毁后不能复用，旧 token 返回 `GBB_E_CONTEXT`，容量满返回 `GBB_E_CAPACITY`。首次有效 Publish 固定其 actor；换演员应销毁并新建，Animator/rig 重绑则递增该上下文 generation。创建、销毁、发布、清理保持 Unity 主线程限制，状态与性能查询只读。只有一个模块级 Shutdown，任意线程调用后取消所有上下文。
+
+每个上下文保留独立快照、stream handle、generation、故障、诊断和 Quartz/Swing 配对状态。实际 job 的 hair/arm 双指纹必须唯一命中一个上下文，否则原样转发；发布与其他上下文指纹冲突会拒绝并取消本次上下文，不清除另一个演员。原生 worker 使用固定槽位的稳定 runtime 和快照副本，不访问 Unity 元数据、不分配上下文，也不保存 AnimationStream 指针。销毁取消 generation，但保留 runtime 内存到进程退出，因此已在执行的 worker 不会访问已释放上下文。整模块 shutdown 门禁同时阻止各上下文开始新的 stream 写入。
+
+`clear_context(token, flags)` 只清该演员；`get_context_status` 与 `get_context_perf` 不会返回别人的最近一次成功。宿主应检查 token 对应 actor、generation、源帧与数据时效，按演员单独降级 fallback。失败的 clear/destroy 不能被宿主当作“没有待取消写入”：必须保留 token 和未确认状态，直到成功取消或场景销毁处理。BeforeQuartz 与 sleeve 诊断仍为显式开关，默认关闭。旧 v2 桥可仅由固定主演员使用，其他演员的 fallback 状态须明确显示，不能将其标成多人原生成功。
+
+本轮离线三上下文测试覆盖真实模拟 Publish、实际 job 路由、同 worker 的 A/B Quartz 配对交错、单演员故障/清理、token 失效与全局退出。尚无当前客户端三人场景的加载、原生 job 或视觉验收；三人指纹唯一性及发型/服装呈现仍须实机验证。
+
+本文以 `include/GakuBurstBridge.h` 中的 v2 与 v3 接口为依据。`src/NativeProfile.hpp` 是运行时支持门禁的权威实现；`profiles/supported-build-20261008.json` 是只读工具的参考记录，修改后者不会修改 DLL。
 
 ## 所有权与线程
 

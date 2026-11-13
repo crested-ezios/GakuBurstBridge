@@ -117,6 +117,8 @@ class Bridge {
     std::array<std::atomic<uint64_t>, static_cast<unsigned>(experiment::Reject::Count)> pairRejects_{};
     static thread_local experiment::Pair<Snapshot> pair_;
     static thread_local experiment::WarmState warm_;
+    static thread_local std::array<experiment::Pair<Snapshot>, GBB_MAX_CONTEXTS> contextPairs_;
+    static thread_local std::array<experiment::WarmState, GBB_MAX_CONTEXTS> contextWarm_;
     SleeveMuscleProbe sleeveProbe_;
     HMODULE burst_{};
     uint32_t burstSize_{};
@@ -141,6 +143,79 @@ class Bridge {
     std::atomic<uint64_t> matches_{}, failures_{}, swingCalls_{}, expired_{}, identitySkips_{}, probeCalls_{};
     Timer publishTimer_, nativeTimer_, solverTimer_;
     static Bridge* self_;
+    Bridge* owner_{};
+    int contextSlot_{-1};
+    void* contextActor_{};
+    struct ContextSlot { GbbContext token{}; std::unique_ptr<Bridge> runtime; };
+    std::array<ContextSlot, GBB_MAX_CONTEXTS> contexts_{};
+    uint64_t nextContext_{1};
+
+    experiment::Pair<Snapshot>& PairState() { return contextSlot_ < 0 ? pair_ : contextPairs_[contextSlot_]; }
+    experiment::WarmState& WarmState() { return contextSlot_ < 0 ? warm_ : contextWarm_[contextSlot_]; }
+    SleeveMuscleProbe& SleeveProbe() { return owner_ ? owner_->sleeveProbe_ : sleeveProbe_; }
+    bool Observing() const {
+        return observing_.load(std::memory_order_acquire) && !stopped_.load(std::memory_order_acquire) &&
+            (!owner_ || (owner_->observing_.load(std::memory_order_acquire) && !owner_->stopped_.load(std::memory_order_acquire)));
+    }
+    void CallbackFault(uint64_t admittedGeneration) noexcept {
+        try {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (stopped_.load(std::memory_order_acquire) ||
+                (admittedGeneration && generation_.load(std::memory_order_acquire)!=admittedGeneration)) return;
+            fault_.store(true,std::memory_order_release); PairState().Reset();
+        } catch (...) {}
+    }
+    void CopyRuntime(const Bridge& source) {
+        // Main-thread-only; worker callbacks are installed once by the owner.
+        meta_=source.meta_; rigType_=source.rigType_; jobClass_=source.jobClass_;
+        bindInfo_=source.bindInfo_; getRigInfo_=source.getRigInfo_; bind_=source.bind_; getRig_=source.getRig_;
+        resolve_=source.resolve_; readRotation_=source.readRotation_; writeRotation_=source.writeRotation_;
+        readWorldRotation_=source.readWorldRotation_; writePosition_=source.writePosition_; readWorldPosition_=source.readWorldPosition_;
+        originalDelta_=source.originalDelta_; burst_=source.burst_; burstSize_=source.burstSize_;
+        discoveryStarted_=source.discoveryStarted_;
+        frequency_=source.frequency_.load(); mainThread_=source.mainThread_.load();
+        quartzVariant_=source.quartzVariant_; experimentReady_=source.experimentReady_.load();
+        metadataLoaded_=source.metadataLoaded_;
+    }
+    Bridge* Context(GbbContext token) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        for (auto& slot:contexts_) if (token && slot.token==token) return slot.runtime.get();
+        return nullptr;
+    }
+    Bridge* RouteJob(void* job,uint64_t* admittedGeneration=nullptr) {
+        if (admittedGeneration) *admittedGeneration=0;
+        if (!Observing()) return nullptr;
+        uintptr_t hair{},arm{};
+        if (!ReadKey(job,profile::Hair,hair) || !ReadKey(job,profile::Arm,arm)) return nullptr;
+        std::lock_guard<std::mutex> lock(mutex_);
+        Bridge* match{};
+        auto consider=[&](Bridge* runtime,const Snapshot& source) {
+            if (!runtime->Observing() || !source.count || source.hair!=hair || source.arm!=arm) return true;
+            if (match) return false;
+            match=runtime;
+            if (admittedGeneration) *admittedGeneration=source.generation;
+            return true;
+        };
+        if (!consider(this,current_)) return nullptr;
+        for (auto& slot:contexts_) if (slot.token) {
+            std::lock_guard<std::mutex> contextLock(slot.runtime->mutex_);
+            if (!consider(slot.runtime.get(),slot.runtime->current_)) {
+                identitySkips_.fetch_add(1,std::memory_order_relaxed); return nullptr;
+            }
+        }
+        return match;
+    }
+    bool UniqueSnapshot(const Snapshot& next) {
+        Bridge* root=owner_ ? owner_ : this;
+        std::lock_guard<std::mutex> lock(root->mutex_);
+        auto aliases=[&](const Snapshot& old) { return old.count && old.hair==next.hair && old.arm==next.arm; };
+        if (root!=this && aliases(root->current_)) return false;
+        for (auto& slot:root->contexts_) if (slot.token && slot.runtime.get()!=this) {
+            std::lock_guard<std::mutex> contextLock(slot.runtime->mutex_);
+            if (aliases(slot.runtime->current_)) return false;
+        }
+        return true;
+    }
 
     bool MainThread(bool claim) {
         DWORD actual = GetCurrentThreadId(), expected = mainThread_.load(std::memory_order_acquire);
@@ -233,6 +308,14 @@ class Bridge {
         return rigType_ != nullptr || unavailable("Rig managed System.Type unavailable");
     }
     bool Initialize() {
+        if (owner_) {
+            if (owner_->failedInitialization_ || (!owner_->initialized_ && !owner_->Initialize())) {
+                owner_->failedInitialization_=true;
+                std::snprintf(initializationFailure_,sizeof(initializationFailure_),"%s",owner_->initializationFailure_);
+                return false;
+            }
+            CopyRuntime(*owner_); initialized_=true; return true;
+        }
         Clock();
         if (!frequency_ || !LoadMetadata()) return false;
         burst_ = GetModuleHandleW(L"lib_burst_generated.dll");
@@ -304,6 +387,11 @@ class Bridge {
         __except(EXCEPTION_EXECUTE_HANDLER) { self->droppedTraces_.fetch_add(1, std::memory_order_relaxed); }
     }
     bool Discover() {
+        if (owner_) {
+            const bool discovered=owner_->Discover();
+            if (discovered) swingTarget_=owner_->swingTarget_;
+            return discovered;
+        }
         if (swingTarget_) return true;
         const auto caller = actualCaller_.load(std::memory_order_acquire);
         if (!caller) return false;
@@ -326,6 +414,11 @@ class Bridge {
     }
     bool EnableQuartzExperiment() {
         if (experimentReady_.load(std::memory_order_acquire)) return true;
+        if (owner_) {
+            if (!owner_->EnableQuartzExperiment()) return false;
+            quartzVariant_=owner_->quartzVariant_;
+            experimentReady_.store(true,std::memory_order_release); return true;
+        }
         // This optional gate cannot disable the proven Swing-only OFF path.
         quartzVariant_ = profile::VerifyQuartz(burst_,reinterpret_cast<uintptr_t>(swingTarget_));
         if (!quartzVariant_) return false;
@@ -380,7 +473,7 @@ class Bridge {
     }
     bool NativePass(Snapshot& s, void* stream, Diagnostic& d) {
         __try {
-            if (!observing_.load(std::memory_order_acquire) || !ValidStream(stream) ||
+            if (!Observing() || !ValidStream(stream) ||
                 generation_.load(std::memory_order_acquire) != s.generation) return false;
             d.dt = originalDelta_(stream);
             int head = -1, hips = -1;
@@ -404,7 +497,7 @@ class Bridge {
                 }
             }
             d.injected = s.inject && !fault_.load(std::memory_order_acquire);
-            if (!observing_.load(std::memory_order_acquire) ||
+            if (!Observing() ||
                 generation_.load(std::memory_order_acquire) != s.generation) { d.injected = false; return false; }
             if (d.injected) {
                 for (uint32_t i = 0; i < s.count; ++i) {
@@ -426,7 +519,7 @@ class Bridge {
         } __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
     }
     void PairRejected(experiment::Reject reason, bool inject, uint64_t expectedGeneration) {
-        pair_.Reset(); pairRejects_[static_cast<unsigned>(reason)].fetch_add(1,std::memory_order_relaxed);
+        PairState().Reset(); pairRejects_[static_cast<unsigned>(reason)].fetch_add(1,std::memory_order_relaxed);
         // A stalled main thread or a worker resuming without its old pair is
         // not a stream write fault. Forward this pass untouched and let the
         // next complete same-source pair recover, without clearing real faults.
@@ -439,11 +532,12 @@ class Bridge {
             if (inject) fault_.store(true,std::memory_order_release);
         }
     }
-    bool BeforeQuartz(void* job, void* stream, uintptr_t caller) {
+    bool BeforeQuartz(void* job, void* stream, uintptr_t caller,uint64_t admittedGeneration=0) {
         const auto bridgeStart=Ticks();
-        if (!experimentReady_.load(std::memory_order_acquire) || !observing_.load(std::memory_order_acquire)) return false;
+        if (!experimentReady_.load(std::memory_order_acquire) || !Observing()) return false;
         Snapshot s; { std::lock_guard<std::mutex> lock(mutex_); s = current_; }
-        if (!s.count || !s.beforeQuartz) { pair_.Reset(); return false; }
+        if (admittedGeneration && s.generation!=admittedGeneration) return false;
+        if (!s.count || !s.beforeQuartz) { PairState().Reset(); return false; }
         uintptr_t hair{}, arm{};
         if (!ReadKey(job,profile::Hair,hair) || !ReadKey(job,profile::Arm,arm) || hair != s.hair || arm != s.arm) return false;
         struct Timing { Timer& timer; uint64_t start; ~Timing() { timer.Add(Ticks()-start); } } timing{quartzNativeTimer_,bridgeStart};
@@ -455,66 +549,70 @@ class Bridge {
         if (now < s.ticks || now - s.ticks >= frequency_ / 2) { PairRejected(experiment::Reject::Expired,s.inject,s.generation); return false; }
         // A worker may have completed Quartz before a stall but never reached
         // Swing. Retire only an expired pair; a fresh duplicate still faults.
-        if (pair_.owner == reinterpret_cast<uintptr_t>(this) && pair_.phase == experiment::Phase::Ready &&
-            pair_.source.generation == s.generation && pair_.Expired(now,frequency_ / 2))
+        if (PairState().owner == reinterpret_cast<uintptr_t>(this) && PairState().phase == experiment::Phase::Ready &&
+            PairState().source.generation == s.generation && PairState().Expired(now,frequency_ / 2))
             PairRejected(experiment::Reject::Expired,false,s.generation);
-        if (!pair_.Begin(reinterpret_cast<uintptr_t>(this),reinterpret_cast<uintptr_t>(job),s,now)) {
+        if (!PairState().Begin(reinterpret_cast<uintptr_t>(this),reinterpret_cast<uintptr_t>(job),s,now)) {
             PairRejected(experiment::Reject::Duplicate,s.inject,s.generation); return false;
         }
         Diagnostic d; d.actor=s.actor; d.frame=s.frame; d.time=s.time;
-        if (!NativePass(pair_.source,stream,d)) { PairRejected(experiment::Reject::Native,s.inject,s.generation); return false; }
+        if (!NativePass(PairState().source,stream,d)) { PairRejected(experiment::Reject::Native,s.inject,s.generation); return false; }
         quartzPasses_.fetch_add(1,std::memory_order_relaxed);
         if (d.injected) quartzInjected_.fetch_add(1,std::memory_order_relaxed);
         return true;
     }
-    static bool BeforeQuartzCpp(void* job, void* stream, uintptr_t caller) noexcept {
-        try { return self_->BeforeQuartz(job,stream,caller); }
-        catch (...) { self_->fault_.store(true,std::memory_order_release); pair_.Reset(); return false; }
+    static bool BeforeQuartzCpp(Bridge* target, void* job, void* stream, uintptr_t caller,uint64_t admittedGeneration) noexcept {
+        try { return target && target->BeforeQuartz(job,stream,caller,admittedGeneration); }
+        catch (...) { if (target) target->CallbackFault(admittedGeneration); return false; }
     }
-    static bool BeforeQuartzGuarded(void* job, void* stream, uintptr_t caller) {
-        __try { return BeforeQuartzCpp(job,stream,caller); }
-        __except(EXCEPTION_EXECUTE_HANDLER) { self_->fault_.store(true,std::memory_order_release); pair_.Reset(); return false; }
+    static bool BeforeQuartzGuarded(Bridge* target, void* job, void* stream, uintptr_t caller,uint64_t admittedGeneration) {
+        __try { return BeforeQuartzCpp(target,job,stream,caller,admittedGeneration); }
+        __except(EXCEPTION_EXECUTE_HANDLER) { if (target) target->CallbackFault(admittedGeneration); return false; }
     }
-    bool BeginSleeveScope(void* job,void* stream,uintptr_t caller,bool paired) {
-        if (!observing_.load(std::memory_order_acquire) || stopped_.load(std::memory_order_acquire)) return false;
+    bool BeginSleeveScope(void* job,void* stream,uintptr_t caller,bool paired,uint64_t admittedGeneration=0) {
+        if (!Observing() || stopped_.load(std::memory_order_acquire)) return false;
         Snapshot source;
-        if (paired) source=pair_.source;
+        if (paired) source=PairState().source;
         else { std::lock_guard<std::mutex> lock(mutex_); source=current_; }
+        if (admittedGeneration && source.generation!=admittedGeneration) return false;
         if (!source.count || !source.sleeveDiagnostics || (source.beforeQuartz && !paired) ||
             !quartzVariant_ || caller != reinterpret_cast<uintptr_t>(burst_)+quartzVariant_->quartzReturn || !ValidStream(stream)) return false;
         const auto now=Ticks(); uintptr_t hair{},arm{};
         if (source.generation != generation_.load(std::memory_order_acquire) || now<source.ticks || now-source.ticks>=frequency_/2 ||
             !ReadKey(job,profile::Hair,hair) || !ReadKey(job,profile::Arm,arm) || hair!=source.hair || arm!=source.arm) return false;
-        sleeveProbe_.Begin(source.actor,source.frame,source.time,source.generation,source.ticks,job,stream,
+        SleeveProbe().Begin(source.actor,source.frame,source.time,source.generation,source.ticks,job,stream,
             source.beforeQuartz && source.inject && !fault_.load(std::memory_order_acquire));
         return true;
     }
-    static bool BeginSleeveScopeCpp(void* job,void* stream,uintptr_t caller,bool paired) noexcept {
-        try { return self_->BeginSleeveScope(job,stream,caller,paired); }
+    static bool BeginSleeveScopeCpp(Bridge* target,void* job,void* stream,uintptr_t caller,bool paired,uint64_t admittedGeneration) noexcept {
+        try { return target && target->BeginSleeveScope(job,stream,caller,paired,admittedGeneration); }
         catch (...) { return false; }
     }
-    static bool BeginSleeveScopeGuarded(void* job,void* stream,uintptr_t caller,bool paired) {
-        __try { return BeginSleeveScopeCpp(job,stream,caller,paired); }
+    static bool BeginSleeveScopeGuarded(Bridge* target,void* job,void* stream,uintptr_t caller,bool paired,uint64_t admittedGeneration) {
+        __try { return BeginSleeveScopeCpp(target,job,stream,caller,paired,admittedGeneration); }
         __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
     }
     static void QuartzDetour(void* job, void* stream) {
         auto* self = self_;
         const auto caller = reinterpret_cast<uintptr_t>(_ReturnAddress());
-        const bool matched = BeforeQuartzGuarded(job,stream,caller);
-        const auto generation = matched ? pair_.source.generation : 0;
-        const bool probe=BeginSleeveScopeGuarded(job,stream,caller,matched);
+        uint64_t admittedGeneration{};
+        auto* target=self->RouteJob(job,&admittedGeneration);
+        const bool matched = BeforeQuartzGuarded(target,job,stream,caller,admittedGeneration);
+        const auto generation = matched ? target->PairState().source.generation : 0;
+        const bool probe=BeginSleeveScopeGuarded(target,job,stream,caller,matched,admittedGeneration);
         // Exactly one natural call; never move the engine stage under SEH.
         self->originalQuartz_(job,stream);
-        if (probe) self->sleeveProbe_.End();
-        if (matched && !pair_.Finish(reinterpret_cast<uintptr_t>(self),self->generation_.load(std::memory_order_acquire)))
-            self->PairRejected(experiment::Reject::Generation,false,generation);
+        if (probe) target->SleeveProbe().End();
+        if (matched && !target->PairState().Finish(reinterpret_cast<uintptr_t>(target),target->generation_.load(std::memory_order_acquire)))
+            target->PairRejected(experiment::Reject::Generation,false,generation);
     }
-    bool BeforeSwing(void* swing, void* stream, uintptr_t caller = 0) {
+    bool BeforeSwing(void* swing, void* stream, uintptr_t caller = 0,uint64_t admittedGeneration=0) {
         const auto start = Ticks();
         swingCalls_.fetch_add(1, std::memory_order_relaxed);
-        if (!observing_.load(std::memory_order_acquire)) return false;
+        if (!Observing()) return false;
         Snapshot s;
         { std::lock_guard<std::mutex> lock(mutex_); s = current_; }
+        if (admittedGeneration && s.generation!=admittedGeneration) return false;
         if (!s.count) return false;
         uintptr_t hair{}, arm{};
         void* job = reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(swing) - profile::Swing);
@@ -527,20 +625,20 @@ class Bridge {
                 PairRejected(experiment::Reject::Caller,s.inject,s.generation); return true;
             }
             bool paired{};
-            const auto reason = pair_.Check(reinterpret_cast<uintptr_t>(this),reinterpret_cast<uintptr_t>(job),
+            const auto reason = PairState().Check(reinterpret_cast<uintptr_t>(this),reinterpret_cast<uintptr_t>(job),
                 generation_.load(std::memory_order_acquire),hair,arm,start,frequency_ / 2,paired);
             if (!paired) {
-                warm_.Prepare(reinterpret_cast<uintptr_t>(this),generation_.load(std::memory_order_acquire),start);
+                WarmState().Prepare(reinterpret_cast<uintptr_t>(this),generation_.load(std::memory_order_acquire),start);
                 // Enabling two detours can catch a wrapper already past Quartz.
                 // Each worker gets a bounded forwarding-only first-pair window.
-                if (reason == experiment::Reject::Missing && warm_.MaySkipMissing(start,frequency_ / 2)) {
+                if (reason == experiment::Reject::Missing && WarmState().MaySkipMissing(start,frequency_ / 2)) {
                     warmupSkips_.fetch_add(1,std::memory_order_relaxed); return true;
                 }
-                const auto rejectedGeneration = reason==experiment::Reject::Generation ? pair_.source.generation : s.generation;
+                const auto rejectedGeneration = reason==experiment::Reject::Generation ? PairState().source.generation : s.generation;
                 PairRejected(reason,s.inject,rejectedGeneration); return true;
             }
-            s = pair_.source; pair_.Reset(); // Consume once before the first write.
-        } else pair_.Reset();
+            s = PairState().source; PairState().Reset(); // Consume once before the first write.
+        } else PairState().Reset();
         if (start < s.ticks || start - s.ticks >= frequency_ / 2) {
             expired_.fetch_add(1, std::memory_order_relaxed);
         } else {
@@ -553,7 +651,7 @@ class Bridge {
                     if (s.beforeQuartz) {
                         pairedPasses_.fetch_add(1,std::memory_order_relaxed);
                         pairedGeneration_.store(s.generation,std::memory_order_release);
-                        warm_.Prepare(reinterpret_cast<uintptr_t>(this),s.generation,start); warm_.paired=true;
+                        WarmState().Prepare(reinterpret_cast<uintptr_t>(this),s.generation,start); WarmState().paired=true;
                     }
                 }
                 else {
@@ -565,25 +663,28 @@ class Bridge {
         nativeTimer_.Add(Ticks() - start);
         return true; // Time original solver only for the two-key Actor match.
     }
-    static bool BeforeSwingCpp(void* swing, void* stream, uintptr_t caller) noexcept {
-        try { return self_->BeforeSwing(swing, stream, caller); }
-        catch (...) { self_->fault_.store(true, std::memory_order_release); return false; }
+    static bool BeforeSwingCpp(Bridge* target,void* swing, void* stream, uintptr_t caller,uint64_t admittedGeneration) noexcept {
+        try { return target && target->BeforeSwing(swing, stream, caller,admittedGeneration); }
+        catch (...) { if (target) target->CallbackFault(admittedGeneration); return false; }
     }
-    static bool BeforeSwingGuarded(void* swing, void* stream, uintptr_t caller) {
-        __try { return BeforeSwingCpp(swing, stream, caller); }
-        __except(EXCEPTION_EXECUTE_HANDLER) { self_->fault_.store(true, std::memory_order_release); return false; }
+    static bool BeforeSwingGuarded(Bridge* target,void* swing, void* stream, uintptr_t caller,uint64_t admittedGeneration) {
+        __try { return BeforeSwingCpp(target,swing, stream, caller,admittedGeneration); }
+        __except(EXCEPTION_EXECUTE_HANDLER) { if (target) target->CallbackFault(admittedGeneration); return false; }
     }
     static void SwingDetour(void* swing, void* stream) {
         auto* self = self_;
         if (!self->observing_.load(std::memory_order_acquire)) {
             self->originalSwing_(swing, stream); return;
         }
-        const bool matched = BeforeSwingGuarded(swing, stream, reinterpret_cast<uintptr_t>(_ReturnAddress()));
+        void* job=reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(swing)-profile::Swing);
+        uint64_t admittedGeneration{};
+        auto* target=self->RouteJob(job,&admittedGeneration);
+        const bool matched = BeforeSwingGuarded(target,swing, stream, reinterpret_cast<uintptr_t>(_ReturnAddress()),admittedGeneration);
         const uint64_t start = matched ? Ticks() : 0;
         // Never manually execute or skip the engine solver. Its own behavior
         // (including an engine fault) is outside the bridge exception boundary.
         self->originalSwing_(swing, stream);
-        if (matched) self->solverTimer_.Add(Ticks() - start);
+        if (matched) target->solverTimer_.Add(Ticks() - start);
     }
     int Reject(int result, const char* why) {
         Cancel(false);
@@ -591,7 +692,71 @@ class Bridge {
         return result;
     }
 public:
-    Bridge() { self_ = this; }
+    explicit Bridge(bool detourOwner=true) { if (detourOwner) self_ = this; }
+    int CreateContext(GbbContext* out) {
+        if (!out) return GBB_E_ARGUMENT;
+        *out=0;
+        if (!MainThread(true)) return GBB_E_THREAD;
+        if (stopped_.load(std::memory_order_acquire)) return GBB_E_SHUTDOWN;
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (stopped_.load(std::memory_order_acquire)) return GBB_E_SHUTDOWN;
+        for (size_t i=0;i<contexts_.size();++i) if (!contexts_[i].token) {
+            auto& slot=contexts_[i];
+            if (!nextContext_) return GBB_E_CAPACITY;
+            if (!slot.runtime) {
+                slot.runtime=std::make_unique<Bridge>(false);
+                slot.runtime->owner_=this; slot.runtime->contextSlot_=static_cast<int>(i);
+            }
+            auto& runtime=*slot.runtime;
+            runtime.Cancel(true); runtime.contextActor_=nullptr;
+            runtime.observing_.store(true,std::memory_order_release);
+            runtime.State(runtime.initialized_ ? GBB_STATE_READY : GBB_STATE_UNINITIALIZED,
+                GBB_PENDING,"Actor context created; waiting for publication");
+            slot.token=nextContext_++; *out=slot.token; return GBB_OK;
+        }
+        return GBB_E_CAPACITY;
+    }
+    int DestroyContext(GbbContext token) {
+        if (!MainThread(false)) return GBB_E_THREAD;
+        if (stopped_.load(std::memory_order_acquire)) return GBB_E_SHUTDOWN;
+        std::lock_guard<std::mutex> lock(mutex_);
+        for (auto& slot:contexts_) if (token && slot.token==token) {
+            slot.runtime->observing_.store(false,std::memory_order_release);
+            slot.runtime->Cancel(false); slot.token=0; return GBB_OK;
+        }
+        return GBB_E_CONTEXT;
+    }
+    int PublishContext(GbbContext token,const GbbFrame* frame) {
+        if (!MainThread(false)) return GBB_E_THREAD;
+        if (stopped_.load(std::memory_order_acquire)) return GBB_E_SHUTDOWN;
+        auto* runtime=Context(token); if (!runtime) return GBB_E_CONTEXT;
+        if (frame && frame->size==sizeof(*frame) && frame->version==GBB_API_VERSION && ValidFrame(*frame)) {
+            if (runtime->contextActor_ && runtime->contextActor_!=frame->actor) return GBB_E_CONTEXT;
+            runtime->contextActor_=frame->actor;
+        }
+        const auto start=Ticks(); const int result=runtime->Publish(frame);
+        runtime->PublishTiming(Ticks()-start); return result;
+    }
+    int ClearContext(GbbContext token,uint32_t flags) {
+        if (!MainThread(false)) return GBB_E_THREAD;
+        if (stopped_.load(std::memory_order_acquire)) return GBB_E_SHUTDOWN;
+        auto* runtime=Context(token); return runtime ? runtime->Clear(flags) : GBB_E_CONTEXT;
+    }
+    int ContextStatus(GbbContext token,GbbStatus* out) {
+        // Read-only callers may race a main-thread destroy/recreate. Keep token
+        // admission and the copied result in one owner-lock interval.
+        std::lock_guard<std::mutex> lock(mutex_);
+        for (auto& slot:contexts_) if (token && slot.token==token) return slot.runtime->Status(out);
+        return GBB_E_CONTEXT;
+    }
+    int ContextPerf(GbbContext token,GbbPerf* out) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        for (auto& slot:contexts_) if (token && slot.token==token) return slot.runtime->Perf(out);
+        return GBB_E_CONTEXT;
+    }
+    void ContextBoundaryFault(GbbContext token) noexcept {
+        try { if (auto* runtime=Context(token)) runtime->BoundaryFault(); } catch (...) {}
+    }
     int Configure(const GbbConfig* config) {
         if (!config || config->size != sizeof(*config)) return GBB_E_ARGUMENT;
         if (config->version != GBB_API_VERSION) return GBB_E_VERSION;
@@ -634,6 +799,7 @@ public:
         if (stopped_.load(std::memory_order_acquire)) return GBB_E_SHUTDOWN;
         Snapshot next;
         if (!BuildSnapshot(*frame, next)) return Reject(GBB_E_BINDING, "Actor rig or transform binding unavailable");
+        if (!UniqueSnapshot(next)) return Reject(GBB_E_BINDING, "Actor double fingerprint aliases another context");
         // Managed calls above run on the main thread without this mutex.
         { std::lock_guard<std::mutex> lock(mutex_);
           if (stopped_.load(std::memory_order_acquire)) return GBB_E_SHUTDOWN;
@@ -658,7 +824,7 @@ public:
         const bool inject = (frame->flags & GBB_FRAME_INJECT) != 0;
         if (next.beforeQuartz || next.sleeveDiagnostics) {
             if (!EnableQuartzExperiment()) return Reject(GBB_E_UNAVAILABLE,"BeforeQuartz experiment rejected: verified entry unavailable; OFF path remains available");
-            if (next.sleeveDiagnostics && !sleeveProbe_.Install(meta_,burst_,quartzVariant_))
+            if (next.sleeveDiagnostics && !SleeveProbe().Install(meta_,burst_,quartzVariant_))
                 return Reject(GBB_E_UNAVAILABLE,"Sleeve muscle diagnostics rejected: actual reader entry unavailable; diagnostic OFF remains available");
         }
         if (next.beforeQuartz) {
@@ -707,6 +873,7 @@ public:
             log_ = nullptr; logContext_ = nullptr;
             state_ = GBB_STATE_SHUTDOWN; result_ = GBB_E_SHUTDOWN;
             std::snprintf(detail_, sizeof(detail_), "%s", "Native bridge shut down; inert hooks and trampolines retained");
+            for (auto& slot:contexts_) if (slot.runtime) slot.runtime->Shutdown();
         }
         return GBB_OK;
     }
@@ -873,6 +1040,32 @@ public:
         }
         json += "}}";
         sleeveProbe_.AppendJson(json);
+        json += ",\n  \"actor_contexts\": [";
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            bool firstContext=true;
+            for (auto& slot:contexts_) if (slot.token) {
+                auto& runtime=*slot.runtime;
+                GbbStatus actorStatus{}; actorStatus.size=sizeof(actorStatus); actorStatus.version=GBB_API_VERSION;
+                runtime.Status(&actorStatus);
+                Snapshot actorSource;
+                { std::lock_guard<std::mutex> contextLock(runtime.mutex_); actorSource=runtime.current_; }
+                std::snprintf(buffer,sizeof(buffer),
+                    "%s{\"token\":%llu,\"actor\":\"0x%llx\",\"generation\":%llu,\"state\":%u,\"injection_fault\":%u,"
+                    "\"source_frame\":%d,\"hair_fingerprint\":\"0x%llx\",\"arm_fingerprint\":\"0x%llx\","
+                    "\"matched_passes\":%llu,\"writes\":%u,\"before_quartz\":%s,\"quartz_passes\":%llu,\"paired_swing_passes\":%llu}",
+                    firstContext ? "" : ",",static_cast<unsigned long long>(slot.token),
+                    static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(actorSource.actor)),
+                    static_cast<unsigned long long>(actorStatus.generation),actorStatus.state,actorStatus.injection_fault,
+                    actorStatus.source_frame,static_cast<unsigned long long>(actorSource.hair),
+                    static_cast<unsigned long long>(actorSource.arm),static_cast<unsigned long long>(actorStatus.matched_passes),
+                    actorStatus.writes,actorSource.beforeQuartz ? "true" : "false",
+                    static_cast<unsigned long long>(runtime.quartzPasses_.load()),
+                    static_cast<unsigned long long>(runtime.pairedPasses_.load()));
+                json+=buffer; firstContext=false;
+            }
+        }
+        json += "]";
         AppendAbiReport(json);
         json += "\n}\n";
         // Explicit main-thread export; no file I/O ever runs in a detour.
@@ -893,6 +1086,8 @@ public:
 Bridge* Bridge::self_{};
 thread_local experiment::Pair<Snapshot> Bridge::pair_{};
 thread_local experiment::WarmState Bridge::warm_{};
+thread_local std::array<experiment::Pair<Snapshot>, GBB_MAX_CONTEXTS> Bridge::contextPairs_{};
+thread_local std::array<experiment::WarmState, GBB_MAX_CONTEXTS> Bridge::contextWarm_{};
 Bridge instance;
 
 // Separate C++ and SEH boundaries keep host ABI calls exception-free without
@@ -937,11 +1132,53 @@ int GBB_CALL DumpTraces(const wchar_t* path) {
     __try { return DumpTracesCpp(path); }
     __except(EXCEPTION_EXECUTE_HANDLER) { return GBB_E_ARGUMENT; }
 }
+int GBB_CALL CreateContext(GbbContext* out) {
+    __try { return CppBoundary([=] { return instance.CreateContext(out); }); }
+    __except(EXCEPTION_EXECUTE_HANDLER) { return GBB_E_ARGUMENT; }
+}
+template<class F> int ContextBoundary(GbbContext token,F fn) noexcept {
+    try { return fn(); }
+    catch (...) { instance.ContextBoundaryFault(token); return GBB_E_FAULT; }
+}
+template<class F> int ReadContextBoundary(F fn) noexcept {
+    try { return fn(); } catch (...) { return GBB_E_ARGUMENT; }
+}
+int GBB_CALL DestroyContext(GbbContext token) {
+    __try { return ContextBoundary(token,[=] { return instance.DestroyContext(token); }); }
+    __except(EXCEPTION_EXECUTE_HANDLER) { instance.ContextBoundaryFault(token); return GBB_E_FAULT; }
+}
+int GBB_CALL PublishContext(GbbContext token,const GbbFrame* frame) {
+    __try { return ContextBoundary(token,[=] { return instance.PublishContext(token,frame); }); }
+    __except(EXCEPTION_EXECUTE_HANDLER) { instance.ContextBoundaryFault(token); return GBB_E_FAULT; }
+}
+int GBB_CALL ClearContext(GbbContext token,uint32_t flags) {
+    __try { return ContextBoundary(token,[=] { return instance.ClearContext(token,flags); }); }
+    __except(EXCEPTION_EXECUTE_HANDLER) { instance.ContextBoundaryFault(token); return GBB_E_FAULT; }
+}
+int GBB_CALL ContextStatus(GbbContext token,GbbStatus* out) {
+    __try { return ReadContextBoundary([=] { return instance.ContextStatus(token,out); }); }
+    __except(EXCEPTION_EXECUTE_HANDLER) { return GBB_E_ARGUMENT; }
+}
+int GBB_CALL ContextPerf(GbbContext token,GbbPerf* out) {
+    __try { return ReadContextBoundary([=] { return instance.ContextPerf(token,out); }); }
+    __except(EXCEPTION_EXECUTE_HANDLER) { return GBB_E_ARGUMENT; }
+}
 } // namespace gbb
 
-extern "C" GBB_EXPORT int32_t GBB_CALL GakuBurstBridge_GetApi(uint32_t version, GbbApi* api) {
+extern "C" GBB_EXPORT int32_t GBB_CALL GakuBurstBridge_GetApi(uint32_t version, void* raw) {
     __try {
-        if (!api || api->size != sizeof(*api)) return GBB_E_ARGUMENT;
+        if (!raw) return GBB_E_ARGUMENT;
+        auto* api=static_cast<GbbApi*>(raw);
+        if (version==GBB_API_VERSION_V3) {
+            auto* api3=static_cast<GbbApiV3*>(raw);
+            if (api3->size!=sizeof(*api3)) return GBB_E_ARGUMENT;
+            if (api3->version!=GBB_API_VERSION_V3) return GBB_E_VERSION;
+            const GbbApiV3 result{sizeof(GbbApiV3),GBB_API_VERSION_V3,&gbb::Configure,
+                &gbb::CreateContext,&gbb::DestroyContext,&gbb::PublishContext,&gbb::ClearContext,
+                &gbb::ContextStatus,&gbb::ContextPerf,&gbb::Shutdown,&gbb::DumpTraces};
+            *api3=result; return GBB_OK;
+        }
+        if (api->size != sizeof(*api)) return GBB_E_ARGUMENT;
         if (version != GBB_API_VERSION || api->version != GBB_API_VERSION) return GBB_E_VERSION;
         const GbbApi result{sizeof(GbbApi), GBB_API_VERSION, &gbb::Configure, &gbb::Publish,
             &gbb::Clear, &gbb::Status, &gbb::Perf, &gbb::Shutdown, &gbb::DumpTraces};

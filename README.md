@@ -82,7 +82,7 @@ powershell -NoProfile -File build.ps1 -RunTests
 > 项目开发过程中主要使用 Codex 与 ChatGPT 辅助分析、实现和验证。文档中的技术结论仍可能存在错误或过时之处。
 
 - [文档索引导航](docs/README.md)
-- [C ABI v2 接口定义](include/GakuBurstBridge.h) 与 [集成契约](docs/INTEGRATION.md)
+- [C ABI v2/v3 接口定义](include/GakuBurstBridge.h) 与 [集成契约](docs/INTEGRATION.md)
 - [客户端更新维护指南](docs/MAINTENANCE_SOP.md)
 - [构建验证记录](docs/VALIDATION.md)
 - 源码遵循 [MIT 许可证](LICENSE)，第三方通知见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)，第三方依赖许可与声明见上述通知及 `deps/minhook/LICENSE.txt`。

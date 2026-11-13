@@ -63,6 +63,11 @@ try {
         if ($LASTEXITCODE -ne 0) { throw 'Sleeve probe test compilation failed.' }
         & $gbbSleeveTest
         if ($LASTEXITCODE -ne 0) { throw 'Sleeve probe tests failed.' }
+        $gbbMultiTest = Join-Path $gbbBuild 'multi_context_tests.exe'
+        & cl.exe @gbbCommon /std:c++20 /EHsc /DGBB_TESTING (Join-Path $gbbRoot 'tests\multi_context_tests.cpp') @gbbMinHookObjects "-Fo$gbbObj/" "-Fe$gbbMultiTest"
+        if ($LASTEXITCODE -ne 0) { throw 'Multi-context test compilation failed.' }
+        & $gbbMultiTest
+        if ($LASTEXITCODE -ne 0) { throw 'Multi-context tests failed.' }
     }
     Get-FileHash -LiteralPath $gbbDll -Algorithm SHA256
     Write-Host 'Build complete. Deployment is explicit; this script does not modify the game.'

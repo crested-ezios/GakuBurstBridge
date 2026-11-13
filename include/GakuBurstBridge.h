@@ -11,6 +11,8 @@
  * Keep callback code/context resident while a borrowed callback can run.
  * No allocation or exception crosses the ABI. No Unity type is exposed. */
 #define GBB_API_VERSION 2u
+#define GBB_API_VERSION_V3 3u
+#define GBB_MAX_CONTEXTS 3u
 #define GBB_MAX_BONES 64u
 #if defined(_WIN32)
 #define GBB_CALL __cdecl
@@ -30,7 +32,8 @@ typedef struct GbbQuaternion { float x, y, z, w; } GbbQuaternion;
 typedef struct GbbVector3 { float x, y, z; } GbbVector3;
 typedef struct GbbWorldPose { GbbQuaternion rotation; GbbVector3 position; } GbbWorldPose;
 enum GbbResult { GBB_OK=0, GBB_PENDING=1, GBB_E_ARGUMENT=-1, GBB_E_VERSION=-2,
-    GBB_E_THREAD=-3, GBB_E_UNAVAILABLE=-4, GBB_E_BINDING=-5, GBB_E_FAULT=-6, GBB_E_SHUTDOWN=-7, GBB_E_IO=-8 };
+    GBB_E_THREAD=-3, GBB_E_UNAVAILABLE=-4, GBB_E_BINDING=-5, GBB_E_FAULT=-6, GBB_E_SHUTDOWN=-7, GBB_E_IO=-8,
+    GBB_E_CONTEXT=-9, GBB_E_CAPACITY=-10 };
 enum GbbState { GBB_STATE_UNINITIALIZED=0, GBB_STATE_DISCOVERING=1,
     GBB_STATE_READY=2, GBB_STATE_OBSERVING=3, GBB_STATE_INJECTING=4,
     GBB_STATE_UNAVAILABLE=5, GBB_STATE_FAULTED=6, GBB_STATE_SHUTDOWN=7 };
@@ -103,7 +106,25 @@ typedef struct GbbApi {
     int32_t (GBB_CALL *dump_traces)(const wchar_t* absolute_file);
 } GbbApi;
 typedef int32_t (GBB_CALL *GbbGetApiFn)(uint32_t requested_version, GbbApi* api);
-GBB_EXPORT int32_t GBB_CALL GakuBurstBridge_GetApi(uint32_t requested_version, GbbApi* api);
+/* v3 adds explicit actor-lifetime contexts. Payloads retain their v2 layout and
+ * version, including GbbConfig/Frame/Status/Perf. Tokens are opaque, nonzero,
+ * process-unique and invalid after destroy. All mutators are main-thread-only;
+ * status/perf remain read-only and shutdown retains its any-thread contract. */
+typedef uint64_t GbbContext;
+typedef struct GbbApiV3 {
+    uint32_t size, version;
+    int32_t (GBB_CALL *configure)(const GbbConfig* config);
+    int32_t (GBB_CALL *create_context)(GbbContext* context);
+    int32_t (GBB_CALL *destroy_context)(GbbContext context);
+    int32_t (GBB_CALL *publish_context)(GbbContext context, const GbbFrame* frame);
+    int32_t (GBB_CALL *clear_context)(GbbContext context, uint32_t flags);
+    int32_t (GBB_CALL *get_context_status)(GbbContext context, GbbStatus* status);
+    int32_t (GBB_CALL *get_context_perf)(GbbContext context, GbbPerf* perf);
+    int32_t (GBB_CALL *shutdown)(void);
+    int32_t (GBB_CALL *dump_traces)(const wchar_t* absolute_file);
+} GbbApiV3;
+typedef int32_t (GBB_CALL *GbbGetApiV3Fn)(uint32_t requested_version, GbbApiV3* api);
+GBB_EXPORT int32_t GBB_CALL GakuBurstBridge_GetApi(uint32_t requested_version, void* api);
 
 #ifdef __cplusplus
 }

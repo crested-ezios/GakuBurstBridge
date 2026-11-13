@@ -24,7 +24,7 @@ $env:TMP = $bridgeTestTemp
 powershell -NoProfile -File build.ps1 -RunTests
 ```
 
-此命令构建 DLL 并运行 ABI、Core、Quartz、Sleeve 用例；ABI 程序仅加载本次 DLL，其余测试使用受控内存和回调，不需要游戏输入。
+此命令构建 DLL 并运行 ABI、Core、Quartz、Sleeve 和多人上下文用例；ABI 程序仅加载本次 DLL，其余测试使用受控内存和回调，不需要游戏输入。
 
 可选 Python 工具与测试只依赖标准库，Windows CPython 3.12 已实测：
 
@@ -34,13 +34,13 @@ python tools/inspect_burst.py --help
 python tools/inspect_metadata.py --help
 ```
 
-这些入口在独立源码 clone 运行通过，[验证记录](VALIDATION.md)对应固定输入与结果，无需另装测试框架。
+这些入口使用合成输入，无需另装测试框架。
 
 ## 第一次 C ABI 接入
 
 1. 包含 [GakuBurstBridge.h](../include/GakuBurstBridge.h)，按固定文件路径加载 Windows x64 DLL。
-2. 解析 `GakuBurstBridge_GetApi` 并请求 ABI v2；设置 size/version、清零 reserved，校验必需函数指针。
-3. 在 Unity 主线程 configure/publish/clear，提交值拷贝；线程/所有权要求见[集成契约](INTEGRATION.md)。
+2. 解析 `GakuBurstBridge_GetApi` 并单演员请求 ABI v2，多人请求 ABI v3。设置 size/version、清零 reserved，校验必需函数指针。
+3. 在 Unity 主线程配置、发布和清理，v3 每位演员持有独立上下文。线程与所有权要求见[集成契约](INTEGRATION.md)。
 4. 区分 OK、pending、unavailable、faulted、shutdown；失败交回 fallback，避免两个求解器写同一批骨骼。
 
 本库没有脱离 GakuMotion/Unity 的动作播放程序。[abi_tests.cpp](../tests/abi_tests.cpp)演示函数表协商，并确认没有 GameAssembly 时返回 unavailable；它不是完整游戏接入示例。
@@ -56,3 +56,9 @@ python tools/inspect_metadata.py --help
 | 构建成功但游戏未变化 | 构建不负责安装，新 DLL 也不会在现有进程生效；见[安装指南](INSTALLATION.md)。 |
 
 MinHook 的许可见 `deps/minhook/LICENSE.txt` 和[第三方通知](../THIRD_PARTY_NOTICES.md)。文档维护不改变该依赖。
+
+## 开发分支与来源
+
+从 `main` 创建发行标签，日常功能合入 `dev`。将发行修复合回 `dev`，按成熟功能向 `main` 交付。
+
+`SOURCE_PROVENANCE.json` 与 `SOURCE_REVIEW.md` 记录 v0.1.0 发行基线的来源与评审。多人上下文增量来自旧开发线提交 `b973445`，可在 `dev` 的 Git 历史中审查。
