@@ -3,6 +3,7 @@
 #include <windows.h>
 #include <intrin.h>
 #include <array>
+#include <deque>
 #include <atomic>
 #include <cmath>
 #include <cstdio>
@@ -117,8 +118,8 @@ class Bridge {
     std::array<std::atomic<uint64_t>, static_cast<unsigned>(experiment::Reject::Count)> pairRejects_{};
     static thread_local experiment::Pair<Snapshot> pair_;
     static thread_local experiment::WarmState warm_;
-    static thread_local std::array<experiment::Pair<Snapshot>, GBB_MAX_CONTEXTS> contextPairs_;
-    static thread_local std::array<experiment::WarmState, GBB_MAX_CONTEXTS> contextWarm_;
+    static thread_local std::deque<experiment::Pair<Snapshot>> contextPairs_;
+    static thread_local std::deque<experiment::WarmState> contextWarm_;
     SleeveMuscleProbe sleeveProbe_;
     HMODULE burst_{};
     uint32_t burstSize_{};
@@ -147,11 +148,23 @@ class Bridge {
     int contextSlot_{-1};
     void* contextActor_{};
     struct ContextSlot { GbbContext token{}; std::unique_ptr<Bridge> runtime; };
-    std::array<ContextSlot, GBB_MAX_CONTEXTS> contexts_{};
+    std::deque<ContextSlot> contexts_{};
     uint64_t nextContext_{1};
 
-    experiment::Pair<Snapshot>& PairState() { return contextSlot_ < 0 ? pair_ : contextPairs_[contextSlot_]; }
-    experiment::WarmState& WarmState() { return contextSlot_ < 0 ? warm_ : contextWarm_[contextSlot_]; }
+    experiment::Pair<Snapshot>& PairState()
+    {
+        if (contextSlot_ < 0) return pair_;
+        if (contextPairs_.size() <= static_cast<size_t>(contextSlot_))
+            contextPairs_.resize(static_cast<size_t>(contextSlot_) + 1);
+        return contextPairs_[static_cast<size_t>(contextSlot_)];
+    }
+    experiment::WarmState& WarmState()
+    {
+        if (contextSlot_ < 0) return warm_;
+        if (contextWarm_.size() <= static_cast<size_t>(contextSlot_))
+            contextWarm_.resize(static_cast<size_t>(contextSlot_) + 1);
+        return contextWarm_[static_cast<size_t>(contextSlot_)];
+    }
     SleeveMuscleProbe& SleeveProbe() { return owner_ ? owner_->sleeveProbe_ : sleeveProbe_; }
     bool Observing() const {
         return observing_.load(std::memory_order_acquire) && !stopped_.load(std::memory_order_acquire) &&
@@ -700,7 +713,10 @@ public:
         if (stopped_.load(std::memory_order_acquire)) return GBB_E_SHUTDOWN;
         std::lock_guard<std::mutex> lock(mutex_);
         if (stopped_.load(std::memory_order_acquire)) return GBB_E_SHUTDOWN;
-        for (size_t i=0;i<contexts_.size();++i) if (!contexts_[i].token) {
+        size_t available = 0;
+        while (available < contexts_.size() && contexts_[available].token) ++available;
+        if (available == contexts_.size()) contexts_.emplace_back();
+        for (size_t i = available; i < contexts_.size(); ++i) if (!contexts_[i].token) {
             auto& slot=contexts_[i];
             if (!nextContext_) return GBB_E_CAPACITY;
             if (!slot.runtime) {
@@ -1086,8 +1102,8 @@ public:
 Bridge* Bridge::self_{};
 thread_local experiment::Pair<Snapshot> Bridge::pair_{};
 thread_local experiment::WarmState Bridge::warm_{};
-thread_local std::array<experiment::Pair<Snapshot>, GBB_MAX_CONTEXTS> Bridge::contextPairs_{};
-thread_local std::array<experiment::WarmState, GBB_MAX_CONTEXTS> Bridge::contextWarm_{};
+thread_local std::deque<experiment::Pair<Snapshot>> Bridge::contextPairs_{};
+thread_local std::deque<experiment::WarmState> Bridge::contextWarm_{};
 Bridge instance;
 
 // Separate C++ and SEH boundaries keep host ABI calls exception-free without

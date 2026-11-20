@@ -56,9 +56,9 @@ int main(int argc, char** argv) {
     CHECK(api3.configure && api3.create_context && api3.destroy_context && api3.publish_context &&
         api3.clear_context && api3.get_context_status && api3.get_context_perf && api3.shutdown && api3.dump_traces);
     CHECK(api3.create_context(nullptr)==GBB_E_ARGUMENT);
-    GbbContext contexts[3]{};
+    GbbContext contexts[8]{};
     for (auto& context:contexts) CHECK(api3.create_context(&context)==GBB_OK && context);
-    GbbContext extra=5; CHECK(api3.create_context(&extra)==GBB_E_CAPACITY && !extra);
+    GbbContext extra=0;
     CHECK(api3.publish_context(contexts[0],&frame)==GBB_E_UNAVAILABLE);
     CHECK(api3.get_context_status(contexts[1],&status)==GBB_OK && status.state==GBB_STATE_UNINITIALIZED);
     CHECK(api3.clear_context(contexts[0],0)==GBB_OK);

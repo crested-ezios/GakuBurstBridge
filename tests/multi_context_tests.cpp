@@ -67,7 +67,10 @@ struct BridgeTestAccess {
         Bridge b; Setup(b);
         GbbContext tokens[3]{};
         for (auto& token:tokens) CHECK(b.CreateContext(&token)==GBB_OK && token);
-        GbbContext extra=9; CHECK(b.CreateContext(&extra)==GBB_E_CAPACITY && !extra);
+        auto* stable=b.Context(tokens[0]);
+        GbbContext extraTokens[5]{};
+        for (auto& token:extraTokens) CHECK(b.CreateContext(&token)==GBB_OK && token && b.Context(tokens[0])==stable);
+        for (auto token:extraTokens) CHECK(b.DestroyContext(token)==GBB_OK && !b.Context(token));
         auto* a=b.Context(tokens[0]); auto* c=b.Context(tokens[2]);
         auto fa=Frame(0),fb=Frame(1),fc=Frame(2);
         CHECK(b.PublishContext(tokens[0],&fa)==GBB_OK);
@@ -144,6 +147,19 @@ struct BridgeTestAccess {
         auto snapshot=c->current_; CHECK(b.ClearContext(tokens[2],0)==GBB_OK);
         Diagnostic diagnostic; stream={}; CHECK(!c->NativePass(snapshot,&stream,diagnostic) && !stream.writes);
         CHECK(b.PublishContext(tokens[2],&fc)==GBB_OK);
+
+        // Master uses v2 while followers use v3; both share the same detour owner.
+        CHECK(b.DestroyContext(tokens[0])==GBB_OK);
+        fa.flags=fb.flags=fc.flags=GBB_FRAME_INJECT;
+        CHECK(b.Publish(&fa)==GBB_OK && b.PublishContext(tokens[1],&fb)==GBB_OK && b.PublishContext(tokens[2],&fc)==GBB_OK);
+        CHECK(b.RouteJob(rigs[0].job)==&b && b.RouteJob(rigs[1].job)==second && b.RouteJob(rigs[2].job)==c);
+        for (unsigned i=0;i<3;++i) {
+            TestStream mixed; Bridge::SwingDetour(rigs[i].job+profile::Swing,&mixed);
+            CHECK(mixed.solver==1 && mixed.writes==2 && (&mixed.q[1].x)[i]==1);
+        }
+        CHECK(b.Clear(0)==GBB_OK && !b.RouteJob(rigs[0].job) && b.RouteJob(rigs[1].job)==second && b.RouteJob(rigs[2].job)==c);
+        CHECK(b.CreateContext(&tokens[0])==GBB_OK && b.PublishContext(tokens[0],&fa)==GBB_OK);
+        a=b.Context(tokens[0]);
         snapshot=c->current_;
         std::thread stop([&] { CHECK(b.Shutdown()==GBB_OK); }); stop.join();
         CHECK(!c->NativePass(snapshot,&stream,diagnostic) && !stream.writes && !a->Observing());
@@ -151,6 +167,7 @@ struct BridgeTestAccess {
             GbbStatus status{}; status.size=sizeof(status); status.version=GBB_API_VERSION;
             CHECK(b.ContextStatus(token,&status)==GBB_OK && status.state==GBB_STATE_SHUTDOWN);
         }
+        GbbContext extra = 0;
         CHECK(b.CreateContext(&extra)==GBB_E_SHUTDOWN && b.ClearContext(tokens[0],0)==GBB_E_SHUTDOWN);
         Bridge::self_=&instance;
     }
