@@ -18,6 +18,7 @@
 #include "QuartzExperiment.hpp"
 #include "QuartzProfile.hpp"
 #include "SleeveMuscleProbe.hpp"
+#include "SwingSceneForceProfile.hpp"
 
 namespace gbb {
 static_assert(sizeof(void*) == 8, "Only measured Windows AMD64 is supported");
@@ -27,7 +28,7 @@ struct Pose { Handle handle; GbbQuaternion rotation{}; GbbVector3 position{}; in
 struct Snapshot {
     void* actor{}; void* animator{}; void* rig{};
     uintptr_t hair{}, arm{}; uint64_t generation{}, ticks{};
-    float time{}; int frame{-1}; bool inject{}, worldValid{}, beforeQuartz{}, sleeveDiagnostics{}; uint32_t count{};
+    float time{}; int frame{-1}; bool inject{}, worldValid{}, beforeQuartz{}, sleeveDiagnostics{}, noSceneForces{}; uint32_t count{};
     std::array<Pose, GBB_MAX_BONES> poses{};
     std::array<void*, GBB_MAX_BONES> transforms{};
     std::array<GbbWorldPose, 2> anchors{};
@@ -94,6 +95,9 @@ class Bridge {
     friend struct BridgeTestAccess;
 #endif
     using SwingFn = void(*)(void*, void*);
+    using PropertyReaderFn = void*(*)(const void*, void*, void*);
+    struct ForceFilterScope { Bridge* actor; uint64_t generation; };
+    static thread_local ForceFilterScope forceFilterScope_;
     using DeltaFn = float(*)(void*);
     using BindFn = void(*)(void*, void*, Handle*, const void*);
     using ResolveFn = void(*)(Handle*, void*);
@@ -107,6 +111,10 @@ class Bridge {
     QuatFn readRotation_{}, writeRotation_{}, readWorldRotation_{};
     PosFn writePosition_{}, readWorldPosition_{};
     DeltaFn originalDelta_{}; SwingFn originalSwing_{};
+    PropertyReaderFn originalPropertyReader_{};
+    uintptr_t propertyReaderReturn_{};
+    std::atomic<const char*> sceneForceStatus_{"scene_force_filter_uninitialized"};
+    uint64_t filteredForceGeneration_{}; // Protected by mutex_.
     void* deltaTarget_{}; void* swingTarget_{};
     SwingFn originalQuartz_{};
     void* quartzTarget_{};
@@ -425,6 +433,61 @@ class Bridge {
         State(GBB_STATE_READY, GBB_OK, "Verified native Swing hook ready; BeforeQuartz experiment OFF");
         return true;
     }
+    static void* PropertyReaderDetour(const void* table, void* output, void* stream) {
+        auto* self = self_;
+        const auto caller = reinterpret_cast<uintptr_t>(_ReturnAddress());
+        void* result = self->originalPropertyReader_(table, output, stream);
+        const auto scope = forceFilterScope_;
+        if (result == output && caller == self->propertyReaderReturn_ && scope.actor)
+            scope.actor->FilterSceneForces(output, scope.generation);
+        return result;
+    }
+    void FilterSceneForces(void* output, uint64_t generation) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (Observing() && !fault_.load(std::memory_order_acquire) &&
+            generation_.load(std::memory_order_acquire) == generation &&
+            profile::ClearSwingSceneForces(output)) filteredForceGeneration_ = generation;
+    }
+    void InstallSceneForceFilter() {
+        if (owner_) { owner_->InstallSceneForceFilter(); return; }
+        if (stopped_.load(std::memory_order_acquire) || !swingTarget_ ||
+            std::strcmp(sceneForceStatus_.load(std::memory_order_relaxed), "scene_force_filter_uninitialized")) return;
+        const auto status = [this](const char* detail) { sceneForceStatus_.store(detail, std::memory_order_release); };
+        const auto* variant = profile::VerifySwingPropertyReader(burst_, reinterpret_cast<uintptr_t>(swingTarget_));
+        if (!variant) { status("scene_force_reader_profile_unverified"); return; }
+        void* data = meta_.Class("ActorAnimation.Runtime.dll", "ActorAnimation", "ActorAnimationManagePropertyData");
+        uint32_t align{};
+        if (!data || meta_.valueSize(data, &align) != profile::SwingPropertiesSize ||
+            !meta_.Offset(data, "globalForce", profile::SwingSceneForceOffset, 0x11) ||
+            !meta_.Offset(data, "windDirection", 44, 0x11)) {
+            status("scene_force_output_layout_unverified");
+            return;
+        }
+        static constexpr const char* floats[]{
+            "windPower", "windFluctuation", "windWaveAmplitude", "windWaveFrequency", "windWavePhase",
+            "windRangeMax", "windRangeMin", "windRangeFrequency", "windRangePhase", "randomPower", "randomFluctuation"};
+        for (unsigned i = 0; i < std::size(floats); ++i) {
+            if (!meta_.Offset(data, floats[i], 56 + i * sizeof(float), 0x0c)) {
+                status("scene_force_output_layout_unverified");
+                return;
+            }
+        }
+        const auto base = reinterpret_cast<uintptr_t>(burst_);
+        void* reader = reinterpret_cast<void*>(base + variant->reader);
+        propertyReaderReturn_ = base + variant->callReturn;
+        if (MH_CreateHook(reader, reinterpret_cast<void*>(&PropertyReaderDetour),
+                         reinterpret_cast<void**>(&originalPropertyReader_)) != MH_OK) {
+            status("scene_force_reader_hook_create_failed");
+            return;
+        }
+        if (MH_EnableHook(reader) != MH_OK) {
+            MH_RemoveHook(reader);
+            originalPropertyReader_ = nullptr;
+            status("scene_force_reader_hook_enable_failed");
+            return;
+        }
+        status("scene_force_filter_armed");
+    }
     bool EnableQuartzExperiment() {
         if (experimentReady_.load(std::memory_order_acquire)) return true;
         if (owner_) {
@@ -480,6 +543,7 @@ class Bridge {
         next.count = frame.bone_count; next.worldValid = anchors == 3;
         next.time = frame.clip_time; next.frame = frame.unity_frame;
         next.inject = (frame.flags & GBB_FRAME_INJECT) != 0;
+        next.noSceneForces = next.inject && (frame.flags & GBB_FRAME_NO_SCENE_FORCES) != 0;
         next.beforeQuartz = (frame.flags & GBB_FRAME_BEFORE_QUARTZ) != 0; next.ticks = Ticks();
         next.sleeveDiagnostics = (frame.flags & GBB_FRAME_SLEEVE_DIAGNOSTICS) != 0;
         return true;
@@ -619,7 +683,8 @@ class Bridge {
         if (matched && !target->PairState().Finish(reinterpret_cast<uintptr_t>(target),target->generation_.load(std::memory_order_acquire)))
             target->PairRejected(experiment::Reject::Generation,false,generation);
     }
-    bool BeforeSwing(void* swing, void* stream, uintptr_t caller = 0,uint64_t admittedGeneration=0) {
+    bool BeforeSwing(void* swing, void* stream, uintptr_t caller = 0,uint64_t admittedGeneration=0,
+                     uint64_t* filterGeneration=nullptr) {
         const auto start = Ticks();
         swingCalls_.fetch_add(1, std::memory_order_relaxed);
         if (!Observing()) return false;
@@ -661,6 +726,7 @@ class Bridge {
             if (!stopped_.load(std::memory_order_acquire) &&
                 generation_.load(std::memory_order_relaxed) == s.generation) {
                 if (ok) { d.sequence = matches_.fetch_add(1, std::memory_order_relaxed) + 1; diagnostic_ = d;
+                    if (filterGeneration && d.injected && s.noSceneForces) *filterGeneration = s.generation;
                     if (s.beforeQuartz) {
                         pairedPasses_.fetch_add(1,std::memory_order_relaxed);
                         pairedGeneration_.store(s.generation,std::memory_order_release);
@@ -676,27 +742,38 @@ class Bridge {
         nativeTimer_.Add(Ticks() - start);
         return true; // Time original solver only for the two-key Actor match.
     }
-    static bool BeforeSwingCpp(Bridge* target,void* swing, void* stream, uintptr_t caller,uint64_t admittedGeneration) noexcept {
-        try { return target && target->BeforeSwing(swing, stream, caller,admittedGeneration); }
+    static bool BeforeSwingCpp(Bridge* target,void* swing, void* stream, uintptr_t caller,uint64_t admittedGeneration,
+                               uint64_t* filterGeneration) noexcept {
+        try { return target && target->BeforeSwing(swing, stream, caller,admittedGeneration,filterGeneration); }
         catch (...) { if (target) target->CallbackFault(admittedGeneration); return false; }
     }
-    static bool BeforeSwingGuarded(Bridge* target,void* swing, void* stream, uintptr_t caller,uint64_t admittedGeneration) {
-        __try { return BeforeSwingCpp(target,swing, stream, caller,admittedGeneration); }
+    static bool BeforeSwingGuarded(Bridge* target,void* swing, void* stream, uintptr_t caller,uint64_t admittedGeneration,
+                                   uint64_t* filterGeneration) {
+        __try { return BeforeSwingCpp(target,swing, stream, caller,admittedGeneration,filterGeneration); }
         __except(EXCEPTION_EXECUTE_HANDLER) { if (target) target->CallbackFault(admittedGeneration); return false; }
+    }
+    void RunSwing(void* swing, void* stream, ForceFilterScope scope) {
+        if (!scope.actor && !forceFilterScope_.actor) { originalSwing_(swing, stream); return; }
+        const auto previous = forceFilterScope_;
+        forceFilterScope_ = scope;
+        __try { originalSwing_(swing, stream); }
+        __finally { forceFilterScope_ = previous; }
     }
     static void SwingDetour(void* swing, void* stream) {
         auto* self = self_;
         if (!self->observing_.load(std::memory_order_acquire)) {
-            self->originalSwing_(swing, stream); return;
+            self->RunSwing(swing, stream, {}); return;
         }
         void* job=reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(swing)-profile::Swing);
         uint64_t admittedGeneration{};
         auto* target=self->RouteJob(job,&admittedGeneration);
-        const bool matched = BeforeSwingGuarded(target,swing, stream, reinterpret_cast<uintptr_t>(_ReturnAddress()),admittedGeneration);
+        uint64_t filterGeneration{};
+        const bool matched = BeforeSwingGuarded(target,swing, stream, reinterpret_cast<uintptr_t>(_ReturnAddress()),
+                                               admittedGeneration,&filterGeneration);
         const uint64_t start = matched ? Ticks() : 0;
         // Never manually execute or skip the engine solver. Its own behavior
         // (including an engine fault) is outside the bridge exception boundary.
-        self->originalSwing_(swing, stream);
+        self->RunSwing(swing, stream, {matched && filterGeneration ? target : nullptr, filterGeneration});
         if (matched) target->solverTimer_.Add(Ticks() - start);
     }
     int Reject(int result, const char* why) {
@@ -788,7 +865,8 @@ public:
     }
     static bool ValidFrame(const GbbFrame& f) {
         if (f.size != sizeof(f) || !f.actor || !f.animator || !f.bone_count || f.bone_count > GBB_MAX_BONES ||
-            f.flags & ~(GBB_FRAME_INJECT | GBB_FRAME_WORLD_DIAGNOSTICS | GBB_FRAME_BEFORE_QUARTZ | GBB_FRAME_SLEEVE_DIAGNOSTICS) || !std::isfinite(f.clip_time)) return false;
+            f.flags & ~(GBB_FRAME_INJECT | GBB_FRAME_WORLD_DIAGNOSTICS | GBB_FRAME_BEFORE_QUARTZ |
+                        GBB_FRAME_SLEEVE_DIAGNOSTICS | GBB_FRAME_NO_SCENE_FORCES) || !std::isfinite(f.clip_time)) return false;
         bool head{}, hips{};
         for (uint32_t i = 0; i < f.bone_count; ++i) {
             const auto& b = f.bones[i];
@@ -825,6 +903,7 @@ public:
               current_.rig != next.rig || current_.hair != next.hair || current_.arm != next.arm ||
               current_.count != next.count || current_.transforms != next.transforms
               || current_.inject != next.inject || current_.beforeQuartz != next.beforeQuartz || current_.sleeveDiagnostics != next.sleeveDiagnostics ||
+              current_.noSceneForces != next.noSceneForces ||
               (next.beforeQuartz && experiment::TimelineBoundary(current_.frame,current_.time,next.frame,next.time))
               );
           if (changed) { generation_.fetch_add(1, std::memory_order_release); diagnostic_ = {}; }
@@ -838,6 +917,7 @@ public:
             return GBB_PENDING;
         }
         const bool inject = (frame->flags & GBB_FRAME_INJECT) != 0;
+        if (next.noSceneForces) InstallSceneForceFilter();
         if (next.beforeQuartz || next.sleeveDiagnostics) {
             if (!EnableQuartzExperiment()) return Reject(GBB_E_UNAVAILABLE,"BeforeQuartz experiment rejected: verified entry unavailable; OFF path remains available");
             if (next.sleeveDiagnostics && !SleeveProbe().Install(meta_,burst_,quartzVariant_))
@@ -905,7 +985,14 @@ public:
           std::memcpy(s.world_before, d.worldBefore.data(), sizeof(s.world_before));
           std::memcpy(s.world_target, d.worldTarget.data(), sizeof(s.world_target));
           std::memcpy(s.world_after, d.worldAfter.data(), sizeof(s.world_after));
-          std::memcpy(s.detail, detail_, sizeof(s.detail)); }
+          std::memcpy(s.detail, detail_, sizeof(s.detail));
+          if (current_.noSceneForces && state_ == GBB_STATE_INJECTING &&
+              !fault_.load(std::memory_order_acquire)) {
+              const auto* readerOwner = owner_ ? owner_ : this;
+              const char* filter = filteredForceGeneration_ == current_.generation ? "scene_forces_filtered" :
+                  readerOwner->sceneForceStatus_.load(std::memory_order_acquire);
+              std::snprintf(s.detail, sizeof(s.detail), "%s", filter);
+          } }
         s.main_thread_id = mainThread_.load(); s.generation = generation_.load();
         s.matched_passes = matches_.load(); s.failed_passes = failures_.load(); s.swing_calls = swingCalls_.load();
         s.injection_fault = fault_.load(std::memory_order_acquire);
@@ -1100,6 +1187,7 @@ public:
     }
 };
 Bridge* Bridge::self_{};
+thread_local Bridge::ForceFilterScope Bridge::forceFilterScope_{};
 thread_local experiment::Pair<Snapshot> Bridge::pair_{};
 thread_local experiment::WarmState Bridge::warm_{};
 thread_local std::deque<experiment::Pair<Snapshot>> Bridge::contextPairs_{};
@@ -1180,6 +1268,8 @@ int GBB_CALL ContextPerf(GbbContext token,GbbPerf* out) {
     __except(EXCEPTION_EXECUTE_HANDLER) { return GBB_E_ARGUMENT; }
 }
 } // namespace gbb
+
+extern "C" GBB_EXPORT uint32_t GBB_CALL GakuBurstBridge_SupportsSceneForceFilter() { return 1; }
 
 extern "C" GBB_EXPORT int32_t GBB_CALL GakuBurstBridge_GetApi(uint32_t version, void* raw) {
     __try {

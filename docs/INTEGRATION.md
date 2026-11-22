@@ -64,6 +64,14 @@ ABI v2 结构大小不变；`GbbFrame.flags` 新增显式 `GBB_FRAME_BEFORE_QUAR
 清除 flag 4 恢复原 Swing-only 路径；宿主切换时应 `clear`，若已熔断，在明确边界用 `GBB_CLEAR_RESET_FAULT` 恢复。Quartz 可选入口验证失败不会把原 OFF 路径永久标为不支持。flag 8 只保存自然 HumanoidSleeve `InternalGetMuscle_Injected` 的实际返回值，最多 8192 条；不写 muscle，不额外调用 reader 或动画求值。`dump_traces` 增加 `before_quartz_experiment` 配对计数及 `sleeve_muscle_probe` 样本，跨 `clear` 保留已捕获证据。首次启用后，钩子仍留到进程退出。
 
 
+## Swing 场景外力过滤
+
+宿主可以通过可选导出 `GakuBurstBridge_SupportsSceneForceFilter()` 识别支持该功能的 DLL，再随注入包设置 `GBB_FRAME_NO_SCENE_FORCES=16`。v2/v3 结构布局维持兼容。Bridge 独立核验当前 Burst 读取器的指令、调用点、unwind 边界和 IL2CPP 字段布局。通过后，仅为当前已注入的角色清空该次 Swing 调用的场景外力输出，原生碰撞、骨链限制和求解器照常运行。旧客户端可以继续不设置该标志。
+
+`GbbStatus.detail` 的 `scene_force_filter_armed` 表示钩子已就绪。`scene_forces_filtered` 表示该上下文的当前 generation 已实际过滤一次场景外力。校验失败时保留原生 Swing，并在同一字段报告失败阶段。
+
+读取器指纹与调用点来自 [54yq 的输入调查](https://github.com/54yq/GakuMotion/commit/7dacef7)。外力过滤改编自 [54yq 的 Live 修复](https://github.com/54yq/GakuMotion/commit/effea26)，遵循 GakuBurstBridge 的 MIT 许可。
+
 ## 两种求解器只能有一个写入者
 
 Native 成功时，fallback 不写同一批头发 / 裙骨。Native 未就绪或故障时，先清空 stream 输入，再让 fallback 接管。切换轨道、Stop、Actor 丢失、服装重绑、场景变化或 seek 时，重置对应状态，避免把旧角色 / 旧时间的惯性带进新姿态。

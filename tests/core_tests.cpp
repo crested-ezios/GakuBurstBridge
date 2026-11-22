@@ -61,6 +61,22 @@ struct BridgeTestAccess {
         s.hair=hair; s.arm=arm; s.ticks=Ticks(); b.current_=s; stream={};
         CHECK(b.BeforeSwing(job+profile::Swing,&stream) && b.matches_.load()==1 && b.nativeTimer_.calls.load()==1);
         CHECK(stream.rotations==2 && b.diagnostic_.writes==2);
+        b.current_.noSceneForces=true; b.current_.ticks=Ticks();
+        uint64_t filterGeneration{};
+        CHECK(b.BeforeSwing(job+profile::Swing,&stream,0,s.generation,&filterGeneration) && filterGeneration==s.generation);
+        std::array<unsigned char,profile::SwingPropertiesSize+2> properties;
+        properties.fill(0x5a);
+        b.FilterSceneForces(properties.data()+1,filterGeneration+1);
+        CHECK(properties[1+profile::SwingSceneForceOffset]==0x5a && b.filteredForceGeneration_==0);
+        b.FilterSceneForces(properties.data()+1,filterGeneration);
+        for (size_t i=0; i<properties.size(); ++i) {
+            const size_t first=1+profile::SwingSceneForceOffset;
+            CHECK(properties[i]==(i>=first && i<first+profile::SwingSceneForceSize ? 0 : 0x5a));
+        }
+        b.State(GBB_STATE_INJECTING,GBB_OK,"Test");
+        GbbStatus filtered{}; filtered.size=sizeof(filtered); filtered.version=GBB_API_VERSION;
+        CHECK(b.Status(&filtered)==GBB_OK && std::strcmp(filtered.detail,"scene_forces_filtered")==0);
+        b.current_.noSceneForces=false;
         b.current_.ticks=Ticks()-b.frequency_.load(); stream={};
         CHECK(b.BeforeSwing(job+profile::Swing,&stream) && stream.rotations==0 && b.expired_.load()==1);
         b.current_.arm=999; CHECK(!b.BeforeSwing(job+profile::Swing,&stream) && b.identitySkips_.load()==1);
@@ -170,8 +186,34 @@ static void TestProfile() {
     CHECK(!profile::VerifyCaller(reinterpret_cast<uintptr_t>(bytes+profile::Variants[0].returned),reinterpret_cast<HMODULE>(bytes),target));
     CHECK(RtlDeleteFunctionTable(functions)); CHECK(VirtualFree(bytes,0,MEM_RELEASE));
 }
+static void TestSceneForceReaderProfile() {
+    using namespace gbb;
+    auto* bytes=static_cast<unsigned char*>(VirtualAlloc(nullptr,0x1000,MEM_RESERVE|MEM_COMMIT,PAGE_EXECUTE_READWRITE));
+    CHECK(bytes);
+    const auto base=reinterpret_cast<uintptr_t>(bytes);
+    bytes[0x800]=1; // valid minimal UNWIND_INFO
+    auto v=profile::SwingPropertyReaders[0];
+    v.reader=0x100; v.end=0x110; v.callReturn=0x220;
+    RUNTIME_FUNCTION function{v.reader,v.end,0x800};
+    CHECK(RtlAddFunctionTable(&function,1,base));
+    std::memset(bytes+v.reader,0x90,v.end-v.reader);
+    v.fingerprint=14695981039346656037ull;
+    for (uint32_t i=v.reader; i<v.end; ++i) v.fingerprint=(v.fingerprint^bytes[i])*1099511628211ull;
+    const auto args=v.callReturn-5-sizeof(v.callArguments);
+    std::memcpy(bytes+args,v.callArguments,sizeof(v.callArguments));
+    bytes[v.callReturn-5]=0xe8;
+    const int32_t displacement=static_cast<int32_t>(v.reader)-static_cast<int32_t>(v.callReturn);
+    std::memcpy(bytes+v.callReturn-4,&displacement,sizeof(displacement));
+    CHECK(profile::MatchesSwingPropertyReader(base,0x1000,v));
+    CHECK(!profile::MatchesSwingPropertyReader(base,0x200,v));
+    bytes[args]^=1; CHECK(!profile::MatchesSwingPropertyReader(base,0x1000,v)); bytes[args]^=1;
+    bytes[v.callReturn-4]^=1; CHECK(!profile::MatchesSwingPropertyReader(base,0x1000,v)); bytes[v.callReturn-4]^=1;
+    bytes[v.end-1]^=1; CHECK(!profile::MatchesSwingPropertyReader(base,0x1000,v)); bytes[v.end-1]^=1;
+    ++v.end; CHECK(!profile::MatchesSwingPropertyReader(base,0x1000,v));
+    CHECK(RtlDeleteFunctionTable(&function)); CHECK(VirtualFree(bytes,0,MEM_RELEASE));
+}
 int main() {
-    gbb::BridgeTestAccess::Run(); TestProfile();
-    std::puts("Core tests: stream/write gates, bounded traces, SSE/AVX PE/unwind guards and forwarding-only any-thread shutdown passed.");
+    gbb::BridgeTestAccess::Run(); TestProfile(); TestSceneForceReaderProfile();
+    std::puts("Core tests: stream/write gates, scoped scene-force bounds, SSE/AVX PE/unwind guards and any-thread shutdown passed.");
     return 0;
 }

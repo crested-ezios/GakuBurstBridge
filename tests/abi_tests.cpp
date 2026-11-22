@@ -12,6 +12,9 @@ int main(int argc, char** argv) {
     HMODULE dll = LoadLibraryExA(argv[1], nullptr, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32);
     CHECK(dll);
     auto get = reinterpret_cast<GbbGetApiFn>(GetProcAddress(dll, "GakuBurstBridge_GetApi")); CHECK(get);
+    using SupportsFilterFn = uint32_t (GBB_CALL*)(void);
+    auto supportsFilter = reinterpret_cast<SupportsFilterFn>(GetProcAddress(dll, "GakuBurstBridge_SupportsSceneForceFilter"));
+    CHECK(supportsFilter && supportsFilter() == 1);
     CHECK(get(GBB_API_VERSION, nullptr) == GBB_E_ARGUMENT);
     GbbApi api{}; CHECK(get(GBB_API_VERSION, &api) == GBB_E_ARGUMENT);
     api.size = sizeof(api); api.version = GBB_API_VERSION;
@@ -28,6 +31,7 @@ int main(int argc, char** argv) {
     CHECK(api.publish(nullptr) == GBB_E_ARGUMENT);
     GbbFrame frame{}; frame.size = sizeof(frame); frame.version = GBB_API_VERSION;
     frame.actor = reinterpret_cast<void*>(1); frame.animator = reinterpret_cast<void*>(2); frame.bone_count = 2;
+    frame.flags = GBB_FRAME_INJECT | GBB_FRAME_NO_SCENE_FORCES;
     frame.bones[0].transform = reinterpret_cast<void*>(3); frame.bones[0].humanoid_id = 0; frame.bones[0].local_rotation.w = 1;
     frame.bones[1].transform = reinterpret_cast<void*>(4); frame.bones[1].humanoid_id = 10; frame.bones[1].local_rotation.w = 1;
     // Without GameAssembly, a well-formed frame must fail before dereferencing Actor pointers.
