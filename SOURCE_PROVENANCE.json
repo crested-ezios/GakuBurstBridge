@@ -484,9 +484,9 @@
     {
       "path": "src/GakuBurstBridge.rc",
       "source_kind": "staging_authored",
-      "sha256": "76435f5185846154d0cd1fb7e2f01aa30a075ffbbb7a03d46d860fd3f779ed5a",
+      "sha256": "35a94534f300eafd31b1b0135a0e3650c1c9279c1e6f5031a0aae4c4856f3af2",
       "review_status": "approved_for_local_staging",
-      "review": "Windows product/file version 0.1.0."
+      "review": "Windows product/file version 0.2.0."
     },
     {
       "path": "src/Il2CppAccess.hpp",
