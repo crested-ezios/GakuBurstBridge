@@ -70,6 +70,8 @@ ABI v2 结构大小不变；`GbbFrame.flags` 新增显式 `GBB_FRAME_BEFORE_QUAR
 
 `GbbStatus.detail` 的 `scene_force_filter_armed` 表示钩子已就绪。`scene_forces_filtered` 表示该上下文的当前 generation 已实际过滤一次场景外力。校验失败时保留原生 Swing，并在同一字段报告失败阶段。
 
+需要对照动画姿态与外力时，在接管期间连续调用两次 `dump_traces`。第一次成功写盘后启动最多 7 秒的采样，第二次导出已采样的数据并复位。每个已发布场景力过滤的上下文最多保留 512 条，超出数记入 `dropped`。样本按演员、generation 和源帧记录头部与髋部局部旋转、髋部注入目标位置、原始 17 项场景外力和该次过滤结果。读不到原始外力时 `raw_forces` 为 `null`。姿态的 `after_injection` 指原生 Swing 求解前的场内姿态。
+
 读取器指纹与调用点来自 [54yq 的输入调查](https://github.com/54yq/GakuMotion/commit/7dacef7)。外力过滤改编自 [54yq 的 Live 修复](https://github.com/54yq/GakuMotion/commit/effea26)，遵循 GakuBurstBridge 的 MIT 许可。
 
 ## 两种求解器只能有一个写入者

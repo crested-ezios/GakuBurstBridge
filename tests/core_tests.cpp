@@ -76,6 +76,36 @@ struct BridgeTestAccess {
         b.State(GBB_STATE_INJECTING,GBB_OK,"Test");
         GbbStatus filtered{}; filtered.size=sizeof(filtered); filtered.version=GBB_API_VERSION;
         CHECK(b.Status(&filtered)==GBB_OK && std::strcmp(filtered.detail,"scene_forces_filtered")==0);
+        b.ToggleSwingForceCapture();
+        CHECK(b.swingForceCaptureOpen_ && b.swingForceCaptureRequested_.load());
+        b.current_.frame=42;
+        b.current_.time=2.5f;
+        b.current_.ticks=Ticks();
+        SwingProbePose probe;
+        CHECK(b.BeforeSwing(job+profile::Swing,&stream,0,s.generation,&filterGeneration,&probe));
+        CHECK(probe.head.frame==42 && probe.head.time==2.5f && probe.hipsTargetPosition.x==1.f);
+        CHECK(probe.hipsBeforeValid && probe.hipsAfterValid && probe.hipsAfter.w==1.f);
+        const float wind=0.4f;
+        std::memcpy(properties.data()+1+profile::SwingSceneForceOffset+6*sizeof(float),&wind,sizeof(wind));
+        b.FilterSceneForces(properties.data()+1,filterGeneration+1,&probe);
+        CHECK(b.swingForceCapture_->count==0);
+        b.FilterSceneForces(properties.data()+1,filterGeneration,&probe);
+        CHECK(b.swingForceCapture_->count==1 && b.swingForceCapture_->samples[0].valid &&
+              b.swingForceCapture_->samples[0].filtered && b.swingForceCapture_->samples[0].raw[6]==wind);
+        CHECK(properties[1+profile::SwingSceneForceOffset+6*sizeof(float)]==0);
+        std::string probeJson="[";
+        b.AppendSwingForceSamples(probeJson,3);
+        CHECK(probeJson.find("\"token\":3")!=std::string::npos &&
+              probeJson.find("\"source_frame\":42")!=std::string::npos &&
+              probeJson.find("\"filtered\":true")!=std::string::npos);
+        b.swingForceCapture_->count=SwingForceCapture::Capacity;
+        b.FilterSceneForces(properties.data()+1,filterGeneration,&probe);
+        CHECK(b.swingForceCapture_->count==SwingForceCapture::Capacity && b.swingForceCapture_->dropped==1);
+        b.swingForceCapture_->deadline=Ticks()-1;
+        b.FilterSceneForces(properties.data()+1,filterGeneration,&probe);
+        CHECK(!b.swingForceCaptureRequested_.load() && b.swingForceCapture_->dropped==1);
+        b.ToggleSwingForceCapture();
+        CHECK(!b.swingForceCaptureOpen_ && !b.swingForceCapture_);
         b.current_.noSceneForces=false;
         b.current_.ticks=Ticks()-b.frequency_.load(); stream={};
         CHECK(b.BeforeSwing(job+profile::Swing,&stream) && stream.rotations==0 && b.expired_.load()==1);

@@ -11,7 +11,9 @@
 #include <cwchar>
 #include <mutex>
 #include <memory>
+#include <optional>
 #include <string>
+#include <vector>
 #include "GakuBurstBridge.h"
 #include "MinHook.h"
 #include "Il2CppAccess.hpp"
@@ -37,6 +39,24 @@ struct Diagnostic {
     uint64_t sequence{}; void* actor{}; int frame{-1}; float time{}, dt{};
     GbbQuaternion before{}, target{}, after{}; uint32_t writes{}; bool injected{}, worldValid{};
     std::array<GbbWorldPose,2> worldBefore{}, worldTarget{}, worldAfter{};
+};
+struct SwingProbePose {
+    Diagnostic head{};
+    GbbQuaternion hipsBefore{}, hipsTarget{}, hipsAfter{};
+    GbbVector3 hipsTargetPosition{};
+    bool hipsBeforeValid{}, hipsAfterValid{};
+};
+struct SwingForceSample {
+    uint64_t ticks{}, generation{};
+    SwingProbePose pose{};
+    std::array<float, profile::SwingSceneForceSize / sizeof(float)> raw{};
+    bool valid{}, filtered{};
+};
+struct SwingForceCapture {
+    static constexpr size_t Capacity = 512;
+    uint64_t deadline{}, dropped{};
+    size_t count{};
+    std::array<SwingForceSample, Capacity> samples{};
 };
 struct DeltaTrace {
     uintptr_t caller{}, begin{}, end{};
@@ -89,6 +109,32 @@ std::string JsonString(const char* value) {
     }
     out += '\"'; return out;
 }
+void AppendFloat(std::string& json, float value) {
+    if (!std::isfinite(value)) { json += "null"; return; }
+    char buffer[32];
+    std::snprintf(buffer,sizeof(buffer),"%.9g",value);
+    json += buffer;
+}
+template<size_t N>
+void AppendFloats(std::string& json, const std::array<float,N>& values) {
+    json += '[';
+    for (size_t i=0;i<N;++i) {
+        if (i) json += ',';
+        AppendFloat(json,values[i]);
+    }
+    json += ']';
+}
+void AppendQuaternion(std::string& json, const GbbQuaternion& q) {
+    AppendFloats(json,std::array{q.x,q.y,q.z,q.w});
+}
+bool ReadSwingSceneForces(const void* output, SwingForceSample& sample) {
+    if (!output) return false;
+    __try {
+        std::memcpy(sample.raw.data(), static_cast<const unsigned char*>(output)+profile::SwingSceneForceOffset,
+                    profile::SwingSceneForceSize);
+        return true;
+    } __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
 
 class Bridge {
 #if defined(GBB_TESTING)
@@ -96,7 +142,7 @@ class Bridge {
 #endif
     using SwingFn = void(*)(void*, void*);
     using PropertyReaderFn = void*(*)(const void*, void*, void*);
-    struct ForceFilterScope { Bridge* actor; uint64_t generation; };
+    struct ForceFilterScope { Bridge* actor; uint64_t generation; const SwingProbePose* pose; };
     static thread_local ForceFilterScope forceFilterScope_;
     using DeltaFn = float(*)(void*);
     using BindFn = void(*)(void*, void*, Handle*, const void*);
@@ -115,6 +161,9 @@ class Bridge {
     uintptr_t propertyReaderReturn_{};
     std::atomic<const char*> sceneForceStatus_{"scene_force_filter_uninitialized"};
     uint64_t filteredForceGeneration_{}; // Protected by mutex_.
+    std::unique_ptr<SwingForceCapture> swingForceCapture_; // Protected by mutex_.
+    std::atomic<bool> swingForceCaptureRequested_{};
+    bool swingForceCaptureOpen_{}; // Root, main-thread-only DumpTraces state.
     void* deltaTarget_{}; void* swingTarget_{};
     SwingFn originalQuartz_{};
     void* quartzTarget_{};
@@ -439,14 +488,32 @@ class Bridge {
         void* result = self->originalPropertyReader_(table, output, stream);
         const auto scope = forceFilterScope_;
         if (result == output && caller == self->propertyReaderReturn_ && scope.actor)
-            scope.actor->FilterSceneForces(output, scope.generation);
+            scope.actor->FilterSceneForces(output, scope.generation, scope.pose);
         return result;
     }
-    void FilterSceneForces(void* output, uint64_t generation) {
+    void FilterSceneForces(void* output, uint64_t generation, const SwingProbePose* pose=nullptr) {
         std::lock_guard<std::mutex> lock(mutex_);
-        if (Observing() && !fault_.load(std::memory_order_acquire) &&
-            generation_.load(std::memory_order_acquire) == generation &&
-            profile::ClearSwingSceneForces(output)) filteredForceGeneration_ = generation;
+        if (!Observing() || fault_.load(std::memory_order_acquire) ||
+            generation_.load(std::memory_order_acquire) != generation) return;
+        SwingForceSample* sample{};
+        if (pose && pose->head.injected && swingForceCapture_ && swingForceCapture_->deadline) {
+            auto& capture = *swingForceCapture_;
+            const auto ticks = Ticks();
+            if (ticks > capture.deadline) {
+                swingForceCaptureRequested_.store(false,std::memory_order_release);
+            } else if (capture.count >= capture.samples.size()) {
+                ++capture.dropped;
+            } else {
+                sample = &capture.samples[capture.count++];
+                sample->ticks = ticks;
+                sample->generation = generation;
+                sample->pose = *pose;
+                sample->valid = ReadSwingSceneForces(output,*sample);
+            }
+        }
+        const bool filtered = profile::ClearSwingSceneForces(output);
+        if (filtered) filteredForceGeneration_ = generation;
+        if (sample) sample->filtered = filtered;
     }
     void InstallSceneForceFilter() {
         if (owner_) { owner_->InstallSceneForceFilter(); return; }
@@ -548,7 +615,11 @@ class Bridge {
         next.sleeveDiagnostics = (frame.flags & GBB_FRAME_SLEEVE_DIAGNOSTICS) != 0;
         return true;
     }
-    bool NativePass(Snapshot& s, void* stream, Diagnostic& d) {
+    bool ReadProbeRotation(Handle& handle, void* stream, GbbQuaternion& result) {
+        __try { readRotation_(&handle,stream,&result); return ValidQuat(result); }
+        __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
+    }
+    bool NativePass(Snapshot& s, void* stream, Diagnostic& d, SwingProbePose* probe=nullptr) {
         __try {
             if (!Observing() || !ValidStream(stream) ||
                 generation_.load(std::memory_order_acquire) != s.generation) return false;
@@ -563,6 +634,12 @@ class Bridge {
             }
             if (head < 0 || hips < 0) return false;
             auto& h = s.poses[head]; readRotation_(&h.handle, stream, &d.before); d.target = h.rotation;
+            if (probe) {
+                auto& hip = s.poses[hips];
+                probe->hipsBeforeValid = ReadProbeRotation(hip.handle,stream,probe->hipsBefore);
+                probe->hipsTarget = hip.rotation;
+                probe->hipsTargetPosition = hip.position;
+            }
             d.worldValid = s.worldValid && readWorldRotation_ && readWorldPosition_;
             d.worldTarget = s.anchors;
             if (d.worldValid) {
@@ -584,6 +661,7 @@ class Bridge {
                 }
             }
             readRotation_(&h.handle, stream, &d.after);
+            if (probe) probe->hipsAfterValid = ReadProbeRotation(s.poses[hips].handle,stream,probe->hipsAfter);
             if (d.worldValid) {
                 const int indices[] = {head, hips};
                 for (int n = 0; n < 2; ++n) {
@@ -684,7 +762,7 @@ class Bridge {
             target->PairRejected(experiment::Reject::Generation,false,generation);
     }
     bool BeforeSwing(void* swing, void* stream, uintptr_t caller = 0,uint64_t admittedGeneration=0,
-                     uint64_t* filterGeneration=nullptr) {
+                     uint64_t* filterGeneration=nullptr, SwingProbePose* filterPose=nullptr) {
         const auto start = Ticks();
         swingCalls_.fetch_add(1, std::memory_order_relaxed);
         if (!Observing()) return false;
@@ -721,12 +799,15 @@ class Bridge {
             expired_.fetch_add(1, std::memory_order_relaxed);
         } else {
             Diagnostic d; d.actor = s.actor; d.frame = s.frame; d.time = s.time;
-            const bool ok = NativePass(s, stream, d);
+            const bool ok = NativePass(s, stream, d, s.noSceneForces ? filterPose : nullptr);
             std::lock_guard<std::mutex> lock(mutex_);
             if (!stopped_.load(std::memory_order_acquire) &&
                 generation_.load(std::memory_order_relaxed) == s.generation) {
                 if (ok) { d.sequence = matches_.fetch_add(1, std::memory_order_relaxed) + 1; diagnostic_ = d;
-                    if (filterGeneration && d.injected && s.noSceneForces) *filterGeneration = s.generation;
+                    if (filterGeneration && d.injected && s.noSceneForces) {
+                        *filterGeneration = s.generation;
+                        if (filterPose) filterPose->head = d;
+                    }
                     if (s.beforeQuartz) {
                         pairedPasses_.fetch_add(1,std::memory_order_relaxed);
                         pairedGeneration_.store(s.generation,std::memory_order_release);
@@ -743,13 +824,13 @@ class Bridge {
         return true; // Time original solver only for the two-key Actor match.
     }
     static bool BeforeSwingCpp(Bridge* target,void* swing, void* stream, uintptr_t caller,uint64_t admittedGeneration,
-                               uint64_t* filterGeneration) noexcept {
-        try { return target && target->BeforeSwing(swing, stream, caller,admittedGeneration,filterGeneration); }
+                               uint64_t* filterGeneration, SwingProbePose* filterPose) noexcept {
+        try { return target && target->BeforeSwing(swing, stream, caller,admittedGeneration,filterGeneration,filterPose); }
         catch (...) { if (target) target->CallbackFault(admittedGeneration); return false; }
     }
     static bool BeforeSwingGuarded(Bridge* target,void* swing, void* stream, uintptr_t caller,uint64_t admittedGeneration,
-                                   uint64_t* filterGeneration) {
-        __try { return BeforeSwingCpp(target,swing, stream, caller,admittedGeneration,filterGeneration); }
+                                   uint64_t* filterGeneration, SwingProbePose* filterPose) {
+        __try { return BeforeSwingCpp(target,swing, stream, caller,admittedGeneration,filterGeneration,filterPose); }
         __except(EXCEPTION_EXECUTE_HANDLER) { if (target) target->CallbackFault(admittedGeneration); return false; }
     }
     void RunSwing(void* swing, void* stream, ForceFilterScope scope) {
@@ -768,12 +849,15 @@ class Bridge {
         uint64_t admittedGeneration{};
         auto* target=self->RouteJob(job,&admittedGeneration);
         uint64_t filterGeneration{};
+        std::optional<SwingProbePose> probePose;
+        if (target && target->swingForceCaptureRequested_.load(std::memory_order_acquire)) probePose.emplace();
+        auto* capturePose = probePose ? &*probePose : nullptr;
         const bool matched = BeforeSwingGuarded(target,swing, stream, reinterpret_cast<uintptr_t>(_ReturnAddress()),
-                                               admittedGeneration,&filterGeneration);
+                                               admittedGeneration,&filterGeneration,capturePose);
         const uint64_t start = matched ? Ticks() : 0;
         // Never manually execute or skip the engine solver. Its own behavior
         // (including an engine fault) is outside the bridge exception boundary.
-        self->RunSwing(swing, stream, {matched && filterGeneration ? target : nullptr, filterGeneration});
+        self->RunSwing(swing, stream, {matched && filterGeneration ? target : nullptr, filterGeneration,capturePose});
         if (matched) target->solverTimer_.Add(Ticks() - start);
     }
     int Reject(int result, const char* why) {
@@ -801,7 +885,7 @@ public:
                 slot.runtime->owner_=this; slot.runtime->contextSlot_=static_cast<int>(i);
             }
             auto& runtime=*slot.runtime;
-            runtime.Cancel(true); runtime.contextActor_=nullptr;
+            runtime.Cancel(true); runtime.FinishSwingForceCapture(); runtime.contextActor_=nullptr;
             runtime.observing_.store(true,std::memory_order_release);
             runtime.State(runtime.initialized_ ? GBB_STATE_READY : GBB_STATE_UNINITIALIZED,
                 GBB_PENDING,"Actor context created; waiting for publication");
@@ -1083,6 +1167,71 @@ public:
         p.identity_skips = identitySkips_.load(); p.delta_probe_calls = probeCalls_.load();
         *out = p; return GBB_OK;
     }
+    void ArmSwingForceCapture(uint64_t deadline) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!current_.count || !current_.noSceneForces) return;
+        swingForceCapture_ = std::make_unique<SwingForceCapture>();
+        swingForceCapture_->deadline = deadline;
+        swingForceCaptureRequested_.store(true,std::memory_order_release);
+    }
+    void AppendSwingForceSamples(std::string& json, GbbContext token) {
+        std::unique_ptr<SwingForceCapture> capture;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (!swingForceCapture_) return;
+            capture = std::make_unique<SwingForceCapture>(*swingForceCapture_);
+        }
+        if (!json.empty() && json.back() != '[') json += ',';
+        json += "{\"token\":" + std::to_string(token) + ",\"dropped\":" +
+            std::to_string(capture->dropped) + ",\"samples\":[";
+        for (size_t i=0;i<capture->count;++i) {
+            const auto& sample = capture->samples[i];
+            const auto& pose = sample.pose.head;
+            if (i) json += ',';
+            char buffer[256];
+            std::snprintf(buffer,sizeof(buffer),
+                "{\"qpc_ticks\":%llu,\"generation\":%llu,\"actor\":\"0x%llx\",\"source_frame\":%d,\"sequence\":%llu,\"clip_time\":",
+                sample.ticks,sample.generation,static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(pose.actor)),
+                pose.frame,pose.sequence);
+            json += buffer;
+            AppendFloat(json,pose.time);
+            json += ",\"stream_dt\":"; AppendFloat(json,pose.dt);
+            json += ",\"head_before\":"; AppendQuaternion(json,pose.before);
+            json += ",\"head_target\":"; AppendQuaternion(json,pose.target);
+            json += ",\"head_after_injection\":"; AppendQuaternion(json,pose.after);
+            json += ",\"hips_before\":";
+            if (sample.pose.hipsBeforeValid) AppendQuaternion(json,sample.pose.hipsBefore); else json += "null";
+            json += ",\"hips_target\":"; AppendQuaternion(json,sample.pose.hipsTarget);
+            json += ",\"hips_after_injection\":";
+            if (sample.pose.hipsAfterValid) AppendQuaternion(json,sample.pose.hipsAfter); else json += "null";
+            const auto hipPosition = sample.pose.hipsTargetPosition;
+            json += ",\"hips_target_position\":";
+            AppendFloats(json,std::array{hipPosition.x,hipPosition.y,hipPosition.z});
+            json += sample.filtered ? ",\"filtered\":true,\"raw_forces\":" : ",\"filtered\":false,\"raw_forces\":";
+            if (sample.valid) AppendFloats(json,sample.raw); else json += "null";
+            json += '}';
+        }
+        json += "]}";
+    }
+    void FinishSwingForceCapture() {
+        std::lock_guard<std::mutex> lock(mutex_);
+        swingForceCaptureRequested_.store(false,std::memory_order_release);
+        swingForceCapture_.reset();
+    }
+    void ToggleSwingForceCapture() {
+        const bool collecting = swingForceCaptureOpen_;
+        const auto deadline = Ticks() + frequency_.load(std::memory_order_relaxed) * 7;
+        const auto toggle = [collecting, deadline](Bridge& runtime) {
+            if (collecting) runtime.FinishSwingForceCapture();
+            else runtime.ArmSwingForceCapture(deadline);
+        };
+        toggle(*this);
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            for (auto& slot:contexts_) if (slot.token) toggle(*slot.runtime);
+        }
+        swingForceCaptureOpen_ = !collecting;
+    }
     int DumpTraces(const wchar_t* path) {
         if (!MainThread(false)) return GBB_E_THREAD;
         if (!path) return GBB_E_ARGUMENT;
@@ -1169,6 +1318,24 @@ public:
             }
         }
         json += "]";
+        json += ",\n  \"swing_force_probe\":{\"phase\":";
+        json += swingForceCaptureOpen_ ? "\"captured\"" : "\"armed\"";
+        json += ",\"window_seconds\":7,\"capacity_per_context\":" + std::to_string(SwingForceCapture::Capacity) +
+            ",\"force_order\":[\"globalForce.x\",\"globalForce.y\",\"globalForce.z\","
+            "\"windDirection.x\",\"windDirection.y\",\"windDirection.z\","
+            "\"windPower\",\"windFluctuation\",\"windWaveAmplitude\",\"windWaveFrequency\",\"windWavePhase\","
+            "\"windRangeMax\",\"windRangeMin\",\"windRangeFrequency\",\"windRangePhase\",\"randomPower\",\"randomFluctuation\"],"
+            "\"contexts\":[";
+        if (swingForceCaptureOpen_) {
+            AppendSwingForceSamples(json,0);
+            std::vector<std::pair<GbbContext, Bridge*>> currentContexts;
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                for (auto& slot:contexts_) if (slot.token) currentContexts.emplace_back(slot.token, slot.runtime.get());
+            }
+            for (auto [token,runtime]:currentContexts) runtime->AppendSwingForceSamples(json,token);
+        }
+        json += "]}";
         AppendAbiReport(json);
         json += "\n}\n";
         // Explicit main-thread export; no file I/O ever runs in a detour.
@@ -1177,7 +1344,9 @@ public:
         DWORD written{};
         const bool ok = WriteFile(file, json.data(), static_cast<DWORD>(json.size()), &written, nullptr) && written == json.size();
         const bool closed = CloseHandle(file) != 0;
-        return ok && closed ? GBB_OK : GBB_E_IO;
+        if (!ok || !closed) return GBB_E_IO;
+        ToggleSwingForceCapture();
+        return GBB_OK;
     }
     void PublishTiming(uint64_t elapsed) noexcept { publishTimer_.Add(elapsed); }
     void BoundaryFault() noexcept {
