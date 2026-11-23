@@ -27,14 +27,6 @@ static_assert(sizeof(void*) == 8, "Only measured Windows AMD64 is supported");
 struct Handle { uint32_t version{}; int index{-1}, skeleton{-1}; };
 static_assert(sizeof(Handle) == profile::HandleSize);
 struct Pose { Handle handle; GbbQuaternion rotation{}; GbbVector3 position{}; int hid{-1}; };
-struct Snapshot {
-    void* actor{}; void* animator{}; void* rig{};
-    uintptr_t hair{}, arm{}; uint64_t generation{}, ticks{};
-    float time{}; int frame{-1}; bool inject{}, worldValid{}, beforeQuartz{}, sleeveDiagnostics{}, noSceneForces{}; uint32_t count{};
-    std::array<Pose, GBB_MAX_BONES> poses{};
-    std::array<void*, GBB_MAX_BONES> transforms{};
-    std::array<GbbWorldPose, 2> anchors{};
-};
 struct Diagnostic {
     uint64_t sequence{}; void* actor{}; int frame{-1}; float time{}, dt{};
     GbbQuaternion before{}, target{}, after{}; uint32_t writes{}; bool injected{}, worldValid{};
@@ -135,6 +127,28 @@ bool ReadSwingSceneForces(const void* output, SwingForceSample& sample) {
         return true;
     } __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
+} // namespace gbb
+namespace gbb {
+inline constexpr size_t kMaxHipsAncestors = 8;
+struct AncestorBinding {
+    void* transform{};
+    Handle handle{};
+    bool handleValid{}, isActorRoot{}, sceneValid{};
+    GbbVector3 sceneLocalPos{};
+    GbbQuaternion sceneLocalRot{};
+};
+
+struct Snapshot {
+    void* actor{}; void* animator{}; void* rig{};
+    uintptr_t hair{}, arm{}; uint64_t generation{}, ticks{};
+    float time{}; int frame{-1}; bool inject{}, worldValid{}, beforeQuartz{}, sleeveDiagnostics{}, noSceneForces{}; uint32_t count{};
+    std::array<Pose, GBB_MAX_BONES> poses{};
+    std::array<void*, GBB_MAX_BONES> transforms{};
+    std::array<GbbWorldPose, 2> anchors{};
+    uint8_t ancestorCount{};
+    uint8_t intermediateAncestorCount{};
+    std::array<AncestorBinding, kMaxHipsAncestors> ancestors{};
+};
 
 class Bridge {
 #if defined(GBB_TESTING)
@@ -150,12 +164,19 @@ class Bridge {
     using QuatFn = void(*)(Handle*, void*, GbbQuaternion*);
     using PosFn = void(*)(Handle*, void*, GbbVector3*);
     using GetRigFn = void*(*)(void*, void*, const void*);
+    using PtrFn = void*(*)(void*);
+    using ScenePosFn = GbbVector3(*)(void*);
+    using SceneQuatFn = GbbQuaternion(*)(void*);
     Il2CppAccess meta_;
     void* rigType_{}; void* jobClass_{};
     const MethodInfo* bindInfo_{}; const MethodInfo* getRigInfo_{};
     BindFn bind_{}; GetRigFn getRig_{}; ResolveFn resolve_{};
-    QuatFn readRotation_{}, writeRotation_{}, readWorldRotation_{};
-    PosFn writePosition_{}, readWorldPosition_{};
+    QuatFn readRotation_{}, writeRotation_{}, readWorldRotation_{}, writeWorldRotation_{};
+    PosFn writePosition_{}, readWorldPosition_{}, writeWorldPosition_{};
+    bool swingHipsHandleVerified_{};
+    PtrFn getComponentTransform_{}, getTransformParent_{};
+    ScenePosFn getSceneLocalPos_{};
+    SceneQuatFn getSceneLocalRot_{};
     DeltaFn originalDelta_{}; SwingFn originalSwing_{};
     PropertyReaderFn originalPropertyReader_{};
     uintptr_t propertyReaderReturn_{};
@@ -169,6 +190,7 @@ class Bridge {
     void* quartzTarget_{};
     const profile::QuartzVariant* quartzVariant_{};
     std::atomic<bool> experimentReady_{};
+    bool quartzAutoAttempted_{};
     std::atomic<uint64_t> quartzPasses_{}, quartzInjected_{}, pairedPasses_{};
     std::atomic<uint64_t> experimentGeneration_{}, experimentStarted_{}, pairedGeneration_{}, warmupSkips_{};
     Timer quartzNativeTimer_;
@@ -240,7 +262,12 @@ class Bridge {
         meta_=source.meta_; rigType_=source.rigType_; jobClass_=source.jobClass_;
         bindInfo_=source.bindInfo_; getRigInfo_=source.getRigInfo_; bind_=source.bind_; getRig_=source.getRig_;
         resolve_=source.resolve_; readRotation_=source.readRotation_; writeRotation_=source.writeRotation_;
-        readWorldRotation_=source.readWorldRotation_; writePosition_=source.writePosition_; readWorldPosition_=source.readWorldPosition_;
+        readWorldRotation_=source.readWorldRotation_; writeWorldRotation_=source.writeWorldRotation_;
+        writePosition_=source.writePosition_; readWorldPosition_=source.readWorldPosition_;
+        writeWorldPosition_=source.writeWorldPosition_;
+        swingHipsHandleVerified_=source.swingHipsHandleVerified_;
+        getComponentTransform_=source.getComponentTransform_; getTransformParent_=source.getTransformParent_;
+        getSceneLocalPos_=source.getSceneLocalPos_; getSceneLocalRot_=source.getSceneLocalRot_;
         originalDelta_=source.originalDelta_; burst_=source.burst_; burstSize_=source.burstSize_;
         discoveryStarted_=source.discoveryStarted_;
         frequency_=source.frequency_.load(); mainThread_=source.mainThread_.load();
@@ -357,6 +384,9 @@ class Bridge {
             !meta_.Offset(jobClass_, "_swingJobSkeleton", profile::Swing, 0x11) ||
             !meta_.Offset(swing, "_time", profile::SwingTime, 0x0c))
             return unavailable("Campus job identity, Swing subobject or Swing time offset changed");
+        swingHipsHandleVerified_ =
+            meta_.Offset(swing, "<rootHandle>k__BackingField", profile::SwingRootHandle, 0x11) &&
+            meta_.Offset(swing, "<hipsHandle>k__BackingField", profile::SwingHipsHandle, 0x11);
         rigType_ = meta_.typeObject(meta_.classType(rig));
         bindInfo_ = meta_.methodFind(extensions, "InternalBindStreamTransform", 3);
         getRigInfo_ = meta_.methodFind(component, "GetComponentInChildren", 1);
@@ -368,6 +398,8 @@ class Bridge {
         writePosition_ = reinterpret_cast<PosFn>(meta_.icall("UnityEngine.Animations.TransformStreamHandle::SetLocalPositionInternal_Injected"));
         readWorldRotation_ = reinterpret_cast<QuatFn>(meta_.icall("UnityEngine.Animations.TransformStreamHandle::GetRotationInternal_Injected"));
         readWorldPosition_ = reinterpret_cast<PosFn>(meta_.icall("UnityEngine.Animations.TransformStreamHandle::GetPositionInternal_Injected"));
+        writeWorldRotation_ = reinterpret_cast<QuatFn>(meta_.icall("UnityEngine.Animations.TransformStreamHandle::SetRotationInternal_Injected"));
+        writeWorldPosition_ = reinterpret_cast<PosFn>(meta_.icall("UnityEngine.Animations.TransformStreamHandle::SetPositionInternal_Injected"));
         deltaTarget_ = meta_.icall("UnityEngine.Animations.AnimationStream::GetDeltaTime");
         const void* required[] = {reinterpret_cast<void*>(bind_), reinterpret_cast<void*>(getRig_),
             reinterpret_cast<void*>(resolve_), reinterpret_cast<void*>(readRotation_),
@@ -375,6 +407,23 @@ class Bridge {
         for (auto* fn : required) if (!profile::Executable(fn)) return unavailable("Required bind, component method or native stream icall unavailable");
         if (!profile::Executable(reinterpret_cast<void*>(readWorldRotation_))) readWorldRotation_ = nullptr;
         if (!profile::Executable(reinterpret_cast<void*>(readWorldPosition_))) readWorldPosition_ = nullptr;
+        if (!profile::Executable(reinterpret_cast<void*>(writeWorldRotation_))) writeWorldRotation_ = nullptr;
+        if (!profile::Executable(reinterpret_cast<void*>(writeWorldPosition_))) writeWorldPosition_ = nullptr;
+
+        if (const auto* compTransformInfo = meta_.methodFind(component, "get_transform", 0))
+            getComponentTransform_ = reinterpret_cast<PtrFn>(compTransformInfo->pointer);
+        if (void* transformClass = meta_.Class("UnityEngine.CoreModule.dll", "UnityEngine", "Transform")) {
+            if (const auto* parentInfo = meta_.methodFind(transformClass, "get_parent", 0))
+                getTransformParent_ = reinterpret_cast<PtrFn>(parentInfo->pointer);
+            if (const auto* lpInfo = meta_.methodFind(transformClass, "get_localPosition", 0))
+                getSceneLocalPos_ = reinterpret_cast<ScenePosFn>(lpInfo->pointer);
+            if (const auto* lrInfo = meta_.methodFind(transformClass, "get_localRotation", 0))
+                getSceneLocalRot_ = reinterpret_cast<SceneQuatFn>(lrInfo->pointer);
+        }
+        if (!profile::Executable(reinterpret_cast<void*>(getComponentTransform_))) getComponentTransform_ = nullptr;
+        if (!profile::Executable(reinterpret_cast<void*>(getTransformParent_))) getTransformParent_ = nullptr;
+        if (!profile::Executable(reinterpret_cast<void*>(getSceneLocalPos_))) getSceneLocalPos_ = nullptr;
+        if (!profile::Executable(reinterpret_cast<void*>(getSceneLocalRot_))) getSceneLocalRot_ = nullptr;
         return rigType_ != nullptr || unavailable("Rig managed System.Type unavailable");
     }
     bool Initialize() {
@@ -579,6 +628,23 @@ class Bridge {
         __try { fn(animator, transform, handle, info); return handle->version && handle->index >= 0; }
         __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
     }
+    static void* CallPtrGuarded(PtrFn fn, void* obj) noexcept {
+        __try { return (fn && obj) ? fn(obj) : nullptr; }
+        __except(EXCEPTION_EXECUTE_HANDLER) { return nullptr; }
+    }
+    static bool ReadSceneLocalTransformGuarded(ScenePosFn getLP, SceneQuatFn getLR,
+                                                void* t, GbbVector3& lp, GbbQuaternion& lr) noexcept {
+        __try {
+            if (!t || !getLP || !getLR) return false;
+            GbbVector3 l = getLP(t);
+            GbbQuaternion r = getLR(t);
+            if (!ValidVec(l) || !ValidQuat(r)) return false;
+            lp = l; lr = r;
+            return true;
+        } __except(EXCEPTION_EXECUTE_HANDLER) {
+            return false;
+        }
+    }
     bool BuildSnapshot(const GbbFrame& frame, Snapshot& next) {
         void* rig = getRig_(frame.actor, rigType_, getRigInfo_);
         if (!rig) return false;
@@ -596,8 +662,10 @@ class Bridge {
         const bool same = old.actor == next.actor && old.animator == next.animator && old.rig == rig &&
                           old.hair == next.hair && old.arm == next.arm;
         unsigned anchors{};
+        void* hipsTransform{};
         for (uint32_t i = 0; i < frame.bone_count; ++i) {
             const auto& b = frame.bones[i]; auto& p = next.poses[i]; p.hid = b.humanoid_id;
+            if (p.hid == 0) hipsTransform = b.transform;
             if (same && i < old.count && old.transforms[i] == b.transform && old.poses[i].hid == p.hid) p.handle = old.poses[i].handle;
             else if (!BindGuarded(bind_, animator, b.transform, &p.handle, bindInfo_)) return false;
             p.rotation = b.local_rotation; p.position = b.local_position; next.transforms[i] = b.transform;
@@ -605,6 +673,33 @@ class Bridge {
                 (p.hid == 10 || p.hid == 0) && ValidQuat(b.world_rotation) && ValidVec(b.world_position)) {
                 const int index = p.hid == 10 ? 0 : 1;
                 next.anchors[index] = {b.world_rotation, b.world_position}; anchors |= 1u << index;
+            }
+        }
+        next.ancestorCount = 0;
+        next.intermediateAncestorCount = 0;
+        if (hipsTransform && getTransformParent_) {
+            void* actorTransform = getComponentTransform_ ? CallPtrGuarded(getComponentTransform_, frame.actor) : nullptr;
+            void* cur = CallPtrGuarded(getTransformParent_, hipsTransform);
+            while (cur && next.ancestorCount < kMaxHipsAncestors) {
+                const uint8_t k = next.ancestorCount;
+                auto& anc = next.ancestors[k];
+                anc.transform = cur;
+                anc.isActorRoot = (actorTransform && cur == actorTransform);
+                if (anc.isActorRoot) {
+                    next.intermediateAncestorCount = k;
+                    ++next.ancestorCount;
+                    break;
+                }
+                if (same && k < old.ancestorCount && old.ancestors[k].transform == cur && old.ancestors[k].handleValid) {
+                    anc.handle = old.ancestors[k].handle;
+                    anc.handleValid = true;
+                } else {
+                    anc.handleValid = BindGuarded(bind_, animator, cur, &anc.handle, bindInfo_);
+                }
+                anc.sceneValid = ReadSceneLocalTransformGuarded(
+                    getSceneLocalPos_, getSceneLocalRot_, cur, anc.sceneLocalPos, anc.sceneLocalRot);
+                ++next.ancestorCount;
+                cur = CallPtrGuarded(getTransformParent_, cur);
             }
         }
         next.count = frame.bone_count; next.worldValid = anchors == 3;
@@ -619,7 +714,45 @@ class Bridge {
         __try { readRotation_(&handle,stream,&result); return ValidQuat(result); }
         __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
     }
-    bool NativePass(Snapshot& s, void* stream, Diagnostic& d, SwingProbePose* probe=nullptr) {
+    void SyncSwingHipsReference(void* swing, const Snapshot& s, int hipsIdx, void* stream) noexcept {
+        if (!swing || !swingHipsHandleVerified_ || !resolve_ || !readWorldPosition_ || !writeWorldPosition_ ||
+            hipsIdx < 0 || static_cast<uint32_t>(hipsIdx) >= s.count) return;
+        __try {
+            const auto* base = static_cast<const unsigned char*>(swing);
+            if (base[profile::SwingHipsHandle + profile::ReadOnlyHandleIsStream] != 1 ||
+                base[profile::SwingRootHandle + profile::ReadOnlyHandleIsStream] != 1) return;
+            Handle hipsRef{}, rootRef{};
+            std::memcpy(&hipsRef, base + profile::SwingHipsHandle, sizeof(Handle));
+            std::memcpy(&rootRef, base + profile::SwingRootHandle, sizeof(Handle));
+            if (!hipsRef.version || hipsRef.index < 0 || !rootRef.version || rootRef.index < 0 ||
+                hipsRef.index == rootRef.index) return;
+            for (uint32_t i = 0; i < s.count; ++i)
+                if (s.poses[i].handle.index == hipsRef.index) return;
+            for (uint8_t k = 0; k < s.ancestorCount; ++k)
+                if (s.ancestors[k].handleValid && s.ancestors[k].handle.index == hipsRef.index) return;
+            resolve_(&rootRef, stream);
+            if (rootRef.skeleton < 0) return;
+            GbbVector3 rootWorldPos{};
+            readWorldPosition_(&rootRef, stream, &rootWorldPos);
+            if (!ValidVec(rootWorldPos)) return;
+            GbbQuaternion rootWorldRot{};
+            bool hasRootRot = false;
+            if (readWorldRotation_ && writeWorldRotation_) {
+                readWorldRotation_(&rootRef, stream, &rootWorldRot);
+                hasRootRot = ValidQuat(rootWorldRot);
+            }
+            Handle hipHandle = s.poses[hipsIdx].handle;
+            GbbVector3 hipsWorldPos{};
+            readWorldPosition_(&hipHandle, stream, &hipsWorldPos);
+            if (!ValidVec(hipsWorldPos)) return;
+            resolve_(&hipsRef, stream);
+            if (hipsRef.skeleton < 0) return;
+            GbbVector3 targetPos{hipsWorldPos.x, rootWorldPos.y, hipsWorldPos.z};
+            writeWorldPosition_(&hipsRef, stream, &targetPos);
+            if (hasRootRot) writeWorldRotation_(&hipsRef, stream, &rootWorldRot);
+        } __except(EXCEPTION_EXECUTE_HANDLER) {}
+    }
+    bool NativePass(Snapshot& s, void* stream, Diagnostic& d, SwingProbePose* probe=nullptr, void* swing=nullptr) {
         __try {
             if (!Observing() || !ValidStream(stream) ||
                 generation_.load(std::memory_order_acquire) != s.generation) return false;
@@ -651,14 +784,32 @@ class Bridge {
                 }
             }
             d.injected = s.inject && !fault_.load(std::memory_order_acquire);
+            bool ancResolved[kMaxHipsAncestors]{};
+            const uint8_t ancSyncCount = s.intermediateAncestorCount < kMaxHipsAncestors
+                ? s.intermediateAncestorCount : static_cast<uint8_t>(kMaxHipsAncestors);
+            if (d.injected) {
+                for (uint8_t k = 0; k < ancSyncCount; ++k) {
+                    auto& anc = s.ancestors[k];
+                    if (!anc.handleValid || !anc.sceneValid || anc.isActorRoot) continue;
+                    resolve_(&anc.handle, stream);
+                    ancResolved[k] = anc.handle.skeleton >= 0;
+                }
+            }
             if (!Observing() ||
                 generation_.load(std::memory_order_acquire) != s.generation) { d.injected = false; return false; }
             if (d.injected) {
+                for (int k = static_cast<int>(ancSyncCount) - 1; k >= 0; --k) {
+                    if (!ancResolved[k]) continue;
+                    auto& anc = s.ancestors[k];
+                    writeRotation_(&anc.handle, stream, &anc.sceneLocalRot);
+                    writePosition_(&anc.handle, stream, &anc.sceneLocalPos);
+                }
                 for (uint32_t i = 0; i < s.count; ++i) {
                     auto& p = s.poses[i]; writeRotation_(&p.handle, stream, &p.rotation);
                     if (p.hid == 0) writePosition_(&p.handle, stream, &p.position);
                     ++d.writes;
                 }
+                if (swing) SyncSwingHipsReference(swing, s, hips, stream);
             }
             readRotation_(&h.handle, stream, &d.after);
             if (probe) probe->hipsAfterValid = ReadProbeRotation(s.poses[hips].handle,stream,probe->hipsAfter);
@@ -711,7 +862,8 @@ class Bridge {
             PairRejected(experiment::Reject::Duplicate,s.inject,s.generation); return false;
         }
         Diagnostic d; d.actor=s.actor; d.frame=s.frame; d.time=s.time;
-        if (!NativePass(PairState().source,stream,d)) { PairRejected(experiment::Reject::Native,s.inject,s.generation); return false; }
+        void* swing = static_cast<unsigned char*>(job) + profile::Swing;
+        if (!NativePass(PairState().source,stream,d,nullptr,swing)) { PairRejected(experiment::Reject::Native,s.inject,s.generation); return false; }
         quartzPasses_.fetch_add(1,std::memory_order_relaxed);
         if (d.injected) quartzInjected_.fetch_add(1,std::memory_order_relaxed);
         return true;
@@ -723,6 +875,47 @@ class Bridge {
     static bool BeforeQuartzGuarded(Bridge* target, void* job, void* stream, uintptr_t caller,uint64_t admittedGeneration) {
         __try { return BeforeQuartzCpp(target,job,stream,caller,admittedGeneration); }
         __except(EXCEPTION_EXECUTE_HANDLER) { if (target) target->CallbackFault(admittedGeneration); return false; }
+    }
+    void TryAutoEnableQuartz() {
+        if (experimentReady_.load(std::memory_order_acquire)) return;
+        if (owner_) {
+            if (!owner_->quartzAutoAttempted_) owner_->TryAutoEnableQuartz();
+            if (owner_->experimentReady_.load(std::memory_order_acquire)) {
+                quartzVariant_ = owner_->quartzVariant_;
+                experimentReady_.store(true, std::memory_order_release);
+            }
+            return;
+        }
+        if (quartzAutoAttempted_ || stopped_.load(std::memory_order_acquire) || !swingTarget_) return;
+        quartzAutoAttempted_ = true;
+        EnableQuartzExperiment();
+    }
+    bool PreQuartzSync(void* job, void* stream, uintptr_t caller, uint64_t admittedGeneration = 0) {
+        if (!experimentReady_.load(std::memory_order_acquire) || !Observing() ||
+            fault_.load(std::memory_order_acquire)) return false;
+        if (!quartzVariant_ || caller != reinterpret_cast<uintptr_t>(burst_) + quartzVariant_->quartzReturn)
+            return false;
+        Snapshot s;
+        { std::lock_guard<std::mutex> lock(mutex_); s = current_; }
+        if (admittedGeneration && s.generation != admittedGeneration) return false;
+        if (!s.count || !s.inject || s.beforeQuartz) return false;
+        uintptr_t hair{}, arm{};
+        if (!ReadKey(job, profile::Hair, hair) || !ReadKey(job, profile::Arm, arm) ||
+            hair != s.hair || arm != s.arm) return false;
+        const auto now = Ticks();
+        if (s.generation != generation_.load(std::memory_order_acquire) ||
+            now < s.ticks || now - s.ticks >= frequency_ / 2) return false;
+        Diagnostic d{}; d.actor = s.actor; d.frame = s.frame; d.time = s.time;
+        void* swing = static_cast<unsigned char*>(job) + profile::Swing;
+        return NativePass(s, stream, d, nullptr, swing);
+    }
+    static bool PreQuartzSyncCpp(Bridge* target, void* job, void* stream, uintptr_t caller, uint64_t admittedGeneration) noexcept {
+        try { return target && target->PreQuartzSync(job, stream, caller, admittedGeneration); }
+        catch (...) { return false; }
+    }
+    static bool PreQuartzSyncGuarded(Bridge* target, void* job, void* stream, uintptr_t caller, uint64_t admittedGeneration) {
+        __try { return PreQuartzSyncCpp(target, job, stream, caller, admittedGeneration); }
+        __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
     }
     bool BeginSleeveScope(void* job,void* stream,uintptr_t caller,bool paired,uint64_t admittedGeneration=0) {
         if (!Observing() || stopped_.load(std::memory_order_acquire)) return false;
@@ -753,6 +946,7 @@ class Bridge {
         uint64_t admittedGeneration{};
         auto* target=self->RouteJob(job,&admittedGeneration);
         const bool matched = BeforeQuartzGuarded(target,job,stream,caller,admittedGeneration);
+        if (!matched && target) PreQuartzSyncGuarded(target, job, stream, caller, admittedGeneration);
         const auto generation = matched ? target->PairState().source.generation : 0;
         const bool probe=BeginSleeveScopeGuarded(target,job,stream,caller,matched,admittedGeneration);
         // Exactly one natural call; never move the engine stage under SEH.
@@ -795,28 +989,32 @@ class Bridge {
             }
             s = PairState().source; PairState().Reset(); // Consume once before the first write.
         } else PairState().Reset();
+        if (filterGeneration && s.inject && s.noSceneForces && !fault_.load(std::memory_order_acquire))
+            *filterGeneration = s.generation;
         if (start < s.ticks || start - s.ticks >= frequency_ / 2) {
             expired_.fetch_add(1, std::memory_order_relaxed);
         } else {
             Diagnostic d; d.actor = s.actor; d.frame = s.frame; d.time = s.time;
-            const bool ok = NativePass(s, stream, d, s.noSceneForces ? filterPose : nullptr);
-            std::lock_guard<std::mutex> lock(mutex_);
-            if (!stopped_.load(std::memory_order_acquire) &&
-                generation_.load(std::memory_order_relaxed) == s.generation) {
-                if (ok) { d.sequence = matches_.fetch_add(1, std::memory_order_relaxed) + 1; diagnostic_ = d;
-                    if (filterGeneration && d.injected && s.noSceneForces) {
-                        *filterGeneration = s.generation;
-                        if (filterPose) filterPose->head = d;
+            const bool ok = NativePass(s, stream, d, s.noSceneForces ? filterPose : nullptr, swing);
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                if (!stopped_.load(std::memory_order_acquire) &&
+                    generation_.load(std::memory_order_relaxed) == s.generation) {
+                    if (ok) { d.sequence = matches_.fetch_add(1, std::memory_order_relaxed) + 1; diagnostic_ = d;
+                        if (filterGeneration && d.injected && s.noSceneForces) {
+                            *filterGeneration = s.generation;
+                            if (filterPose) filterPose->head = d;
+                        }
+                        if (s.beforeQuartz) {
+                            pairedPasses_.fetch_add(1,std::memory_order_relaxed);
+                            pairedGeneration_.store(s.generation,std::memory_order_release);
+                            WarmState().Prepare(reinterpret_cast<uintptr_t>(this),s.generation,start); WarmState().paired=true;
+                        }
                     }
-                    if (s.beforeQuartz) {
-                        pairedPasses_.fetch_add(1,std::memory_order_relaxed);
-                        pairedGeneration_.store(s.generation,std::memory_order_release);
-                        WarmState().Prepare(reinterpret_cast<uintptr_t>(this),s.generation,start); WarmState().paired=true;
+                    else {
+                        failures_.fetch_add(1, std::memory_order_relaxed);
+                        if (s.inject) fault_.store(true, std::memory_order_release);
                     }
-                }
-                else {
-                    failures_.fetch_add(1, std::memory_order_relaxed);
-                    if (s.inject) fault_.store(true, std::memory_order_release);
                 }
             }
         }
@@ -857,7 +1055,7 @@ class Bridge {
         const uint64_t start = matched ? Ticks() : 0;
         // Never manually execute or skip the engine solver. Its own behavior
         // (including an engine fault) is outside the bridge exception boundary.
-        self->RunSwing(swing, stream, {matched && filterGeneration ? target : nullptr, filterGeneration,capturePose});
+        self->RunSwing(swing, stream, {matched && filterGeneration ? target : nullptr, filterGeneration, capturePose});
         if (matched) target->solverTimer_.Add(Ticks() - start);
     }
     int Reject(int result, const char* why) {
@@ -1002,6 +1200,7 @@ public:
         }
         const bool inject = (frame->flags & GBB_FRAME_INJECT) != 0;
         if (next.noSceneForces) InstallSceneForceFilter();
+        if (inject && !next.beforeQuartz && !next.sleeveDiagnostics) TryAutoEnableQuartz();
         if (next.beforeQuartz || next.sleeveDiagnostics) {
             if (!EnableQuartzExperiment()) return Reject(GBB_E_UNAVAILABLE,"BeforeQuartz experiment rejected: verified entry unavailable; OFF path remains available");
             if (next.sleeveDiagnostics && !SleeveProbe().Install(meta_,burst_,quartzVariant_))
@@ -1101,12 +1300,19 @@ public:
         std::string observed = "{\"pointer_size\":" + std::to_string(sizeof(void*));
         std::string classes = "[";
         if (available) {
-            struct Target { const char* assembly; const char* name; const char* space; const char* group; const char* sizeKey; };
+            struct Target { const char* assembly; const char* name; const char* space; const char* group; const char* sizeKey; uint32_t fieldLimit; };
             const Target targets[] = {
-                {"UnityEngine.AnimationModule.dll","AnimationStream","UnityEngine.Animations","stream_fields_unboxed","stream_value_size"},
-                {"UnityEngine.AnimationModule.dll","TransformStreamHandle","UnityEngine.Animations","handle_fields_unboxed","handle_value_size"},
-                {"campus-submodule.Runtime.dll","CampusActorAnimationJob","ActorAnimation","job_fields_unboxed",nullptr},
-                {"ActorAnimation.Runtime.dll","ActorAnimationSwingJobSkeleton","ActorAnimation","swing_fields_unboxed",nullptr}
+                {"UnityEngine.AnimationModule.dll","AnimationStream","UnityEngine.Animations","stream_fields_unboxed","stream_value_size",64},
+                {"UnityEngine.AnimationModule.dll","TransformStreamHandle","UnityEngine.Animations","handle_fields_unboxed","handle_value_size",64},
+                {"campus-submodule.Runtime.dll","CampusActorAnimationJob","ActorAnimation","job_fields_unboxed",nullptr,64},
+                {"ActorAnimation.Runtime.dll","ActorAnimationSwingJobSkeleton","ActorAnimation","swing_fields_unboxed",nullptr,64},
+                {"ActorAnimation.Runtime.dll","ActorAnimationManagePropertyData","ActorAnimation","manage_property_fields_unboxed",nullptr,160},
+                {"ActorAnimation.Runtime.dll","ActorSwingJobDynamicBone","ActorAnimation","dynamic_bone_fields_unboxed",nullptr,160},
+                {"ActorAnimation.Runtime.dll","ActorSwingJobStaticBone","ActorAnimation","static_bone_fields_unboxed",nullptr,160},
+                {"ActorAnimation.Runtime.dll","ActorSwingJobChainBone","ActorAnimation","chain_bone_fields_unboxed",nullptr,160},
+                {"ActorAnimation.Runtime.dll","ActorSwingJobBreastBone","ActorAnimation","breast_bone_fields_unboxed",nullptr,160},
+                {"ActorAnimation.Runtime.dll","ActorSwingJobSeatDynamicCorrection","ActorAnimation","seat_correction_fields_unboxed",nullptr,160},
+                {"ActorAnimation.Runtime.dll","ActorAnimationQuartzDriverHairJobBone","ActorAnimation","quartz_hair_bone_fields_unboxed",nullptr,160}
             };
             bool firstClass = true;
             for (const auto& target : targets) {
@@ -1122,7 +1328,7 @@ public:
                 std::string offsets = "{";
                 classes += ",\"fields\":[";
                 void* iterator{}; uint32_t count{}; bool firstOffset = true;
-                for (; count < 64; ++count) {
+                for (; count < target.fieldLimit; ++count) {
                     void* field = meta_.classFields(klass, &iterator);
                     if (!field) break;
                     const char* name = meta_.fieldName(field);
@@ -1142,8 +1348,8 @@ public:
                         offsets += JsonString(name) + ':' + std::to_string(offset - profile::BoxHeader);
                     }
                 }
-                const bool truncated = count == 64 && meta_.classFields(klass, &iterator) != nullptr;
-                classes += "],\"field_limit\":64,\"fields_truncated\":";
+                const bool truncated = count == target.fieldLimit && meta_.classFields(klass, &iterator) != nullptr;
+                classes += "],\"field_limit\":" + std::to_string(target.fieldLimit) + ",\"fields_truncated\":";
                 classes += truncated ? "true}" : "false}";
                 offsets += '}'; observed += ',' + JsonString(target.group) + ':' + offsets;
             }

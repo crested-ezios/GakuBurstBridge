@@ -9,6 +9,7 @@ namespace gbb::profile {
 inline constexpr char Name[] = "gakumas-burst-20261008-windows-x64";
 inline constexpr int BoxHeader = 16, StreamSize = 56, HandleSize = 12;
 inline constexpr int Hair = 80, Arm = 144, Swing = 208, SwingTime = 556;
+inline constexpr int SwingRootHandle = 0x10, SwingHipsHandle = 0x28, ReadOnlyHandleIsStream = 0x14;
 inline constexpr uint32_t DeltaSlot = 0x1585c0;
 struct Variant { uint32_t begin, end, returned; };
 inline constexpr Variant Variants[] = {

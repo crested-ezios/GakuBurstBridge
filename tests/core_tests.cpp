@@ -5,14 +5,21 @@
 namespace gbb {
 struct TestStream {
     uint32_t version{2}, padding{}; uintptr_t pointers[6]{1,1,1,1,0,1};
-    GbbQuaternion q[2]{{0,0,0,1},{0,0,0,1}};
-    GbbVector3 p[2]{}; int rotations{}, positions{}; bool failResolve{};
+    GbbQuaternion q[6]{{0,0,0,1},{0,0,0,1},{0,0,0,1},{0,0,0,1},{0,0,0,1},{0,0,0,1}};
+    GbbVector3 p[6]{};
+    GbbQuaternion wq[6]{{0,0,0,1},{0,0,0,1},{0,0,0,1},{0,0,0,1},{0,0,0,1},{0,0,0,1}};
+    GbbVector3 wp[6]{};
+    int rotations{}, positions{}, worldPositions{}, worldRotations{}; bool failResolve{};
 };
 static float Delta(void*) { return 1.0f / 120.0f; }
 static void Resolve(Handle* h, void* raw) { h->skeleton = static_cast<TestStream*>(raw)->failResolve && h->index == 1 ? -1 : h->index; }
 static void Read(Handle* h, void* raw, GbbQuaternion* out) { *out = static_cast<TestStream*>(raw)->q[h->index]; }
 static void Write(Handle* h, void* raw, GbbQuaternion* q) { auto* s=static_cast<TestStream*>(raw); s->q[h->index]=*q; ++s->rotations; }
 static void Position(Handle* h, void* raw, GbbVector3* p) { auto* s=static_cast<TestStream*>(raw); s->p[h->index]=*p; ++s->positions; }
+static void ReadWorldPos(Handle* h, void* raw, GbbVector3* out) { *out = static_cast<TestStream*>(raw)->wp[h->index]; }
+static void ReadWorldRot(Handle* h, void* raw, GbbQuaternion* out) { *out = static_cast<TestStream*>(raw)->wq[h->index]; }
+static void WriteWorldPos(Handle* h, void* raw, GbbVector3* p) { auto* s=static_cast<TestStream*>(raw); s->wp[h->index]=*p; ++s->worldPositions; }
+static void WriteWorldRot(Handle* h, void* raw, GbbQuaternion* q) { auto* s=static_cast<TestStream*>(raw); s->wq[h->index]=*q; ++s->worldRotations; }
 static void LogCount(void* raw, int32_t, const char*) { ++*static_cast<int*>(raw); }
 static void SolverCount(void*, void* raw) { ++*static_cast<int*>(raw); }
 static Bridge* cancelDuringResolve{};
@@ -51,6 +58,16 @@ struct BridgeTestAccess {
         TestStream stream; Diagnostic d;
         CHECK(b.NativePass(s,&stream,d) && d.writes==2 && d.injected && stream.rotations==2 && stream.positions==1);
         CHECK(d.before.w==1 && d.after.y==1 && stream.p[0].x==1);
+        s.ancestorCount=2; s.intermediateAncestorCount=1;
+        s.ancestors[0]={}; s.ancestors[0].handle.index=2; s.ancestors[0].handleValid=true; s.ancestors[0].sceneValid=true;
+        s.ancestors[0].isActorRoot=false; s.ancestors[0].sceneLocalPos={4,5,6}; s.ancestors[0].sceneLocalRot={0,0,1,0};
+        s.ancestors[1]={}; s.ancestors[1].handle.index=3; s.ancestors[1].handleValid=true; s.ancestors[1].sceneValid=true;
+        s.ancestors[1].isActorRoot=true; s.ancestors[1].sceneLocalPos={9,9,9}; s.ancestors[1].sceneLocalRot={1,0,0,0};
+        stream={}; d={};
+        CHECK(b.NativePass(s,&stream,d) && d.writes==2 && d.injected && stream.rotations==3 && stream.positions==2);
+        CHECK(stream.p[2].x==4 && stream.p[2].y==5 && stream.p[2].z==6 && stream.q[2].z==1);
+        CHECK(stream.p[3].x==0 && stream.q[3].w==1);
+        s.ancestorCount=0; s.intermediateAncestorCount=0;
         stream={}; stream.failResolve=true; d={};
         CHECK(!b.NativePass(s,&stream,d) && stream.rotations==0 && stream.positions==0);
         stream={}; stream.pointers[5]=0; d={}; CHECK(!b.NativePass(s,&stream,d) && stream.rotations==0);
@@ -61,6 +78,60 @@ struct BridgeTestAccess {
         s.hair=hair; s.arm=arm; s.ticks=Ticks(); b.current_=s; stream={};
         CHECK(b.BeforeSwing(job+profile::Swing,&stream) && b.matches_.load()==1 && b.nativeTimer_.calls.load()==1);
         CHECK(stream.rotations==2 && b.diagnostic_.writes==2);
+        {
+            b.readWorldPosition_ = &ReadWorldPos; b.readWorldRotation_ = &ReadWorldRot;
+            b.writeWorldPosition_ = &WriteWorldPos; b.writeWorldRotation_ = &WriteWorldRot;
+            b.swingHipsHandleVerified_ = true;
+            Handle rootH{2, 4, -1}, hipsRefH{2, 5, -1};
+            uint8_t isStreamOne = 1, isStreamZero = 0;
+            auto* swingPtr = job + profile::Swing;
+            std::memcpy(swingPtr + profile::SwingRootHandle, &rootH, sizeof(Handle));
+            std::memcpy(swingPtr + profile::SwingRootHandle + profile::ReadOnlyHandleIsStream, &isStreamOne, 1);
+            std::memcpy(swingPtr + profile::SwingHipsHandle, &hipsRefH, sizeof(Handle));
+            std::memcpy(swingPtr + profile::SwingHipsHandle + profile::ReadOnlyHandleIsStream, &isStreamOne, 1);
+            stream = {}; stream.wp[0] = {1.5f, 0.88f, -6.6f}; stream.wp[4] = {10.0f, 0.5f, 20.0f};
+            stream.wq[4] = {0, 1, 0, 0}; stream.wp[5] = {99.0f, 0.0f, 99.0f};
+            b.current_.ticks = Ticks();
+            CHECK(b.BeforeSwing(swingPtr, &stream));
+            CHECK(stream.wp[5].x == 1.5f && stream.wp[5].y == 0.5f && stream.wp[5].z == -6.6f);
+            CHECK(stream.wq[5].y == 1.0f && stream.wq[5].w == 0.0f);
+            CHECK(stream.worldPositions == 1 && stream.worldRotations == 1 && b.diagnostic_.writes == 2);
+            // Alias guard: never overwrite humanoid bone even if SwingHipsHandle shares its index.
+            hipsRefH.index = 0;
+            std::memcpy(swingPtr + profile::SwingHipsHandle, &hipsRefH, sizeof(Handle));
+            stream = {}; stream.wp[0] = {1.5f, 0.88f, -6.6f}; stream.wp[4] = {10.0f, 0.5f, 20.0f};
+            b.current_.ticks = Ticks();
+            CHECK(b.BeforeSwing(swingPtr, &stream) && stream.worldPositions == 0 && stream.worldRotations == 0 && stream.wp[0].y == 0.88f);
+            // Non-stream guard: skip without faulting when ReadOnlyTransformHandle is not a stream handle.
+            hipsRefH.index = 5;
+            std::memcpy(swingPtr + profile::SwingHipsHandle, &hipsRefH, sizeof(Handle));
+            std::memcpy(swingPtr + profile::SwingHipsHandle + profile::ReadOnlyHandleIsStream, &isStreamZero, 1);
+            stream = {}; b.current_.ticks = Ticks();
+            CHECK(b.BeforeSwing(swingPtr, &stream) && stream.worldPositions == 0 && !b.fault_.load());
+            b.swingHipsHandleVerified_ = false;
+            b.readWorldPosition_ = nullptr; b.readWorldRotation_ = nullptr;
+            b.writeWorldPosition_ = nullptr; b.writeWorldRotation_ = nullptr;
+            std::memset(swingPtr, 0, 64);
+        }
+        {
+            b.experimentReady_ = true; b.quartzVariant_ = &profile::QuartzVariants[0];
+            b.burst_ = nullptr;
+            b.current_.beforeQuartz = false; b.current_.inject = true;
+            const auto matchesBefore = b.matches_.load();
+            stream = {}; b.current_.ticks = Ticks();
+            CHECK(b.PreQuartzSync(job, &stream, b.quartzVariant_->quartzReturn));
+            CHECK(stream.rotations == 2 && stream.positions == 1);
+            CHECK(b.matches_.load() == matchesBefore && !b.fault_.load());
+            stream = {};
+            CHECK(!b.PreQuartzSync(job, &stream, 1) && stream.rotations == 0 && !b.fault_.load());
+            b.current_.beforeQuartz = true;
+            CHECK(!b.PreQuartzSync(job, &stream, b.quartzVariant_->quartzReturn) && stream.rotations == 0);
+            b.current_.beforeQuartz = false; b.current_.inject = false;
+            CHECK(!b.PreQuartzSync(job, &stream, b.quartzVariant_->quartzReturn) && stream.rotations == 0);
+            b.current_.inject = true; b.experimentReady_ = false;
+            CHECK(!b.PreQuartzSync(job, &stream, b.quartzVariant_->quartzReturn) && stream.rotations == 0 && !b.fault_.load());
+            b.quartzVariant_ = nullptr;
+        }
         b.current_.noSceneForces=true; b.current_.ticks=Ticks();
         uint64_t filterGeneration{};
         CHECK(b.BeforeSwing(job+profile::Swing,&stream,0,s.generation,&filterGeneration) && filterGeneration==s.generation);
@@ -109,6 +180,11 @@ struct BridgeTestAccess {
         b.current_.noSceneForces=false;
         b.current_.ticks=Ticks()-b.frequency_.load(); stream={};
         CHECK(b.BeforeSwing(job+profile::Swing,&stream) && stream.rotations==0 && b.expired_.load()==1);
+        b.current_.noSceneForces=true; filterGeneration=0;
+        CHECK(b.BeforeSwing(job+profile::Swing,&stream,0,s.generation,&filterGeneration) && filterGeneration==s.generation && stream.rotations==0 && b.expired_.load()==2);
+        b.fault_.store(true); filterGeneration=0;
+        CHECK(b.BeforeSwing(job+profile::Swing,&stream,0,s.generation,&filterGeneration) && filterGeneration==0);
+        b.fault_.store(false); b.current_.noSceneForces=false;
         b.current_.arm=999; CHECK(!b.BeforeSwing(job+profile::Swing,&stream) && b.identitySkips_.load()==1);
         b.current_=s; b.current_.ticks=Ticks(); stream={}; stream.failResolve=true;
         CHECK(b.BeforeSwing(job+profile::Swing,&stream) && b.fault_.load() && b.failures_.load()==1);
